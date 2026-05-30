@@ -74,7 +74,7 @@ export function Gallery() {
         <div className="mt-6 flex justify-center">
           <Link
             href="#galeria"
-            className="inline-flex min-h-[42px] min-w-[230px] items-center justify-center rounded border border-red-400/75 bg-black/35 px-7 py-3 text-xs font-black uppercase tracking-normal text-white transition duration-300 hover:border-laser hover:bg-laser/10 hover:shadow-[0_0_26px_rgba(225,18,27,0.18)]"
+            className="inline-flex min-h-[42px] w-full max-w-[260px] items-center justify-center rounded border border-red-400/75 bg-black/35 px-7 py-3 text-xs font-black uppercase tracking-normal text-white transition duration-300 hover:border-laser hover:bg-laser/10 hover:shadow-[0_0_26px_rgba(225,18,27,0.18)] sm:min-w-[230px] sm:w-auto"
           >
             Ver mais trabalhos
           </Link>

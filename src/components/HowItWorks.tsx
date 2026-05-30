@@ -44,7 +44,7 @@ export function HowItWorks() {
           </h2>
         </div>
 
-        <div className="relative mt-7 grid gap-7 md:grid-cols-2 md:gap-y-8 lg:grid-cols-4 lg:gap-6">
+        <div className="relative mt-7 grid gap-6 md:grid-cols-2 md:gap-y-8 lg:grid-cols-4 lg:gap-6">
           <div className="pointer-events-none absolute left-[12%] right-[12%] top-[28px] hidden h-px bg-[linear-gradient(90deg,transparent,rgba(225,18,27,0.22)_7%,rgba(225,18,27,0.55)_50%,rgba(225,18,27,0.22)_93%,transparent)] lg:block" />
           <div className="pointer-events-none absolute left-[25%] top-[25px] hidden h-2 w-2 -translate-x-1/2 rounded-full bg-laser shadow-[0_0_14px_rgba(225,18,27,0.5)] lg:block" />
           <div className="pointer-events-none absolute left-[50%] top-[25px] hidden h-2 w-2 -translate-x-1/2 rounded-full bg-laser shadow-[0_0_14px_rgba(225,18,27,0.5)] lg:block" />

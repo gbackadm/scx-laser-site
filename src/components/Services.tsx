@@ -72,10 +72,10 @@ export function Services() {
           {services.map(({ title, description, Icon, imageStyle }, index) => (
             <article
               key={title}
-              className="group relative min-h-[246px] overflow-hidden rounded-md border border-white/22 bg-[#0a0c0d] shadow-[0_16px_45px_rgba(0,0,0,0.32)] transition duration-300 hover:-translate-y-1 hover:border-laser/70 hover:shadow-[0_18px_50px_rgba(225,18,27,0.12)]"
+              className="group relative min-h-[206px] overflow-hidden rounded-md border border-white/22 bg-[#0a0c0d] shadow-[0_16px_45px_rgba(0,0,0,0.32)] transition duration-300 hover:-translate-y-1 hover:border-laser/70 hover:shadow-[0_18px_50px_rgba(225,18,27,0.12)] sm:min-h-[246px]"
               style={{ animationDelay: `${index * 70}ms` }}
             >
-              <div className="relative h-[128px] overflow-hidden border-b border-white/10">
+              <div className="relative h-[96px] overflow-hidden border-b border-white/10 sm:h-[128px]">
                 <div
                   className="absolute inset-0 opacity-95 transition duration-300 group-hover:scale-105 group-hover:opacity-100"
                   style={{ background: imageStyle }}
@@ -84,11 +84,11 @@ export function Services() {
                 <div className="absolute inset-x-5 bottom-5 h-px bg-gradient-to-r from-transparent via-white/28 to-transparent" />
               </div>
 
-              <div className="absolute left-1/2 top-[106px] flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border border-red-300/45 bg-[linear-gradient(180deg,#b61920_0%,#7e0e13_100%)] text-white shadow-[0_0_20px_rgba(225,18,27,0.34)]">
+              <div className="absolute left-1/2 top-[78px] flex h-11 w-11 -translate-x-1/2 items-center justify-center rounded-full border border-red-300/45 bg-[linear-gradient(180deg,#b61920_0%,#7e0e13_100%)] text-white shadow-[0_0_20px_rgba(225,18,27,0.34)] sm:top-[106px] sm:h-12 sm:w-12">
                 <Icon size={23} strokeWidth={1.9} />
               </div>
 
-              <div className="px-4 pb-5 pt-9 text-center">
+              <div className="px-4 pb-4 pt-7 text-center sm:pb-5 sm:pt-9">
                 <h3 className="text-sm font-extrabold text-zinc-100">{title}</h3>
                 <p className="mt-2 text-[0.78rem] leading-5 text-zinc-300">
                   {description}

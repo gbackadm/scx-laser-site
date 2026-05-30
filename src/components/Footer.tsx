@@ -29,7 +29,7 @@ export function Footer() {
       className="bg-[linear-gradient(180deg,#030303_0%,#070808_100%)] text-white"
     >
       <div className="border-b border-laser/45 border-t border-white/10">
-        <div className="mx-auto grid max-w-7xl gap-9 px-5 py-9 sm:grid-cols-2 sm:px-8 lg:grid-cols-[1.35fr_0.8fr_1fr_0.8fr] lg:px-12">
+        <div className="mx-auto grid max-w-7xl gap-8 px-5 py-9 sm:grid-cols-2 sm:gap-9 sm:px-8 lg:grid-cols-[1.35fr_0.8fr_1fr_0.8fr] lg:px-12">
           <div>
             <Link href="#inicio" aria-label="SCX Laser" className="inline-flex">
               <img
@@ -62,7 +62,7 @@ export function Footer() {
             <h2 className="text-sm font-black uppercase tracking-[0.12em] text-laser">
               Links Rápidos
             </h2>
-            <nav className="mt-5 grid grid-cols-2 gap-x-8 gap-y-3 text-sm text-zinc-300 sm:grid-cols-1">
+            <nav className="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 text-sm text-zinc-300 min-[420px]:gap-x-8 sm:grid-cols-1">
               {quickLinks.map((link) => (
                 <Link
                   key={link.href}
@@ -84,7 +84,7 @@ export function Footer() {
                 <Link
                   key={label}
                   href={href}
-                  className="inline-flex items-center gap-3 transition duration-300 hover:text-laser"
+                  className="inline-flex items-start gap-3 break-words transition duration-300 hover:text-laser"
                 >
                   <Icon size={18} className="shrink-0 text-laser" />
                   <span>{label}</span>

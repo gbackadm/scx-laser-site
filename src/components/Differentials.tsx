@@ -38,7 +38,7 @@ export function Differentials() {
           {differentials.map(({ title, description, Icon }, index) => (
             <article
               key={title}
-              className="group flex gap-4 rounded-md border border-white/16 bg-black/36 p-5 shadow-[0_18px_46px_rgba(0,0,0,0.3)] transition duration-300 hover:-translate-y-0.5 hover:border-laser/60 hover:bg-white/[0.035] hover:shadow-[0_18px_50px_rgba(225,18,27,0.12)]"
+              className="group flex flex-col gap-4 rounded-md border border-white/16 bg-black/36 p-5 shadow-[0_18px_46px_rgba(0,0,0,0.3)] transition duration-300 hover:-translate-y-0.5 hover:border-laser/60 hover:bg-white/[0.035] hover:shadow-[0_18px_50px_rgba(225,18,27,0.12)] min-[420px]:flex-row"
               style={{ animationDelay: `${index * 80}ms` }}
             >
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-red-300/35 bg-[linear-gradient(180deg,#a9141a_0%,#65090d_100%)] text-white shadow-[0_0_18px_rgba(225,18,27,0.25)] transition duration-300 group-hover:shadow-[0_0_24px_rgba(225,18,27,0.4)]">
