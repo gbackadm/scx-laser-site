@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDatabasePool } from "@/domain/catalog/db";
+import { getDatabasePool, isDatabaseConfigured } from "@/domain/catalog/db";
 
 export type SiteSettings = {
   brandName: string;
@@ -99,7 +99,7 @@ function mapSiteSettings(row: SiteSettingsRow): SiteSettings {
 }
 
 export async function getSiteSettings() {
-  if (!process.env.DATABASE_URL) {
+  if (!isDatabaseConfigured()) {
     return fallbackSiteSettings;
   }
 
@@ -124,7 +124,8 @@ export async function getSiteSettings() {
       }
     }
 
-    throw error;
+    console.error("Nao foi possivel carregar os dados da empresa.", error);
+    return fallbackSiteSettings;
   }
 }
 

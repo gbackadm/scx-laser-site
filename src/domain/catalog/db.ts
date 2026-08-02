@@ -4,8 +4,12 @@ import { Pool } from "pg";
 
 let pool: Pool | undefined;
 
+export function isDatabaseConfigured() {
+  return Boolean(process.env.DATABASE_URL);
+}
+
 export function getDatabasePool() {
-  if (!process.env.DATABASE_URL) {
+  if (!isDatabaseConfigured()) {
     throw new Error("DATABASE_URL is required for database access.");
   }
 

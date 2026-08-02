@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { getDatabasePool } from "@/domain/catalog/db";
+import { getDatabasePool, isDatabaseConfigured } from "@/domain/catalog/db";
 import type { AdminUser, UserRole } from "@/domain/catalog/types";
 
 export const adminSessionCookieName = "scx_admin_session";
@@ -53,6 +53,10 @@ export async function createAdminSession(userId: string) {
 }
 
 export async function getCurrentAdminSession() {
+  if (!isDatabaseConfigured()) {
+    return null;
+  }
+
   const cookieStore = await cookies();
   const token = cookieStore.get(adminSessionCookieName)?.value;
 
@@ -60,40 +64,50 @@ export async function getCurrentAdminSession() {
     return null;
   }
 
-  const result = await getDatabasePool().query(
-    `
-      SELECT
-        s.id AS session_id,
-        s.expires_at,
-        u.id,
-        u.name,
-        u.email,
-        u.role,
-        u.is_active
-      FROM scx_catalog_admin_sessions s
-      INNER JOIN scx_catalog_admin_users u ON u.id = s.user_id
-      WHERE s.token_hash = $1
-        AND s.revoked_at IS NULL
-        AND s.expires_at > now()
-        AND u.is_active = true
-      LIMIT 1
-    `,
-    [hashSessionToken(token)],
-  );
+  let result;
+  try {
+    result = await getDatabasePool().query(
+      `
+        SELECT
+          s.id AS session_id,
+          s.expires_at,
+          u.id,
+          u.name,
+          u.email,
+          u.role,
+          u.is_active
+        FROM scx_catalog_admin_sessions s
+        INNER JOIN scx_catalog_admin_users u ON u.id = s.user_id
+        WHERE s.token_hash = $1
+          AND s.revoked_at IS NULL
+          AND s.expires_at > now()
+          AND u.is_active = true
+        LIMIT 1
+      `,
+      [hashSessionToken(token)],
+    );
+  } catch (error) {
+    console.error("Nao foi possivel carregar a sessao administrativa.", error);
+    return null;
+  }
 
   const row = result.rows[0];
   if (!row) {
     return null;
   }
 
-  await getDatabasePool().query(
-    `
-      UPDATE scx_catalog_admin_sessions
-      SET last_seen_at = now()
-      WHERE id = $1
-    `,
-    [row.session_id],
-  );
+  try {
+    await getDatabasePool().query(
+      `
+        UPDATE scx_catalog_admin_sessions
+        SET last_seen_at = now()
+        WHERE id = $1
+      `,
+      [row.session_id],
+    );
+  } catch (error) {
+    console.error("Nao foi possivel atualizar a sessao administrativa.", error);
+  }
 
   return {
     id: row.id,
@@ -123,16 +137,20 @@ export async function revokeCurrentAdminSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(adminSessionCookieName)?.value;
 
-  if (token) {
-    await getDatabasePool().query(
-      `
-        UPDATE scx_catalog_admin_sessions
-        SET revoked_at = now()
-        WHERE token_hash = $1
-          AND revoked_at IS NULL
-      `,
-      [hashSessionToken(token)],
-    );
+  if (token && isDatabaseConfigured()) {
+    try {
+      await getDatabasePool().query(
+        `
+          UPDATE scx_catalog_admin_sessions
+          SET revoked_at = now()
+          WHERE token_hash = $1
+            AND revoked_at IS NULL
+        `,
+        [hashSessionToken(token)],
+      );
+    } catch (error) {
+      console.error("Nao foi possivel encerrar a sessao administrativa.", error);
+    }
   }
 
   cookieStore.delete(adminSessionCookieName);

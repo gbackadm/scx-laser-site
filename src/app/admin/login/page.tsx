@@ -34,6 +34,8 @@ export default async function AdminLoginPage({
       ? "E-mail ou senha invalidos."
       : params?.erro === "campos"
         ? "Informe e-mail e senha."
+        : params?.erro === "banco"
+          ? "Banco de dados indisponivel ou nao configurado no ambiente."
         : null;
 
   return (

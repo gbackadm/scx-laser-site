@@ -4,8 +4,11 @@ import { headers } from "next/headers";
 import { PublicCatalogBrowser } from "@/components/PublicCatalogBrowser";
 import { getCatalogAccess } from "@/domain/catalog/access";
 import { toPublicCatalogProducts } from "@/domain/catalog/publicProducts";
+import type { CatalogProduct, Category } from "@/domain/catalog/types";
 import { getSiteSettings, siteWhatsappUrl } from "@/domain/site/settings";
 import {
+  defaultPricingBatchTiers,
+  defaultPricingRule,
   getGlobalPricingRule,
   listGlobalPricingBatchTiers,
 } from "@/domain/pricing/rules";
@@ -20,15 +23,23 @@ export const dynamic = "force-dynamic";
 
 export default async function PublicCatalogPage() {
   const catalogAccess = getCatalogAccess();
-  const [products, categories, pricingRule, batchTiers, siteSettings, requestHeaders] =
-    await Promise.all([
-    catalogAccess.listCatalogProducts({ publicationStatus: "published" }),
-    catalogAccess.listCategories(),
-    getGlobalPricingRule(),
-    listGlobalPricingBatchTiers(),
-    getSiteSettings(),
-    headers(),
-  ]);
+  const siteSettings = await getSiteSettings();
+  const requestHeaders = await headers();
+  let products: CatalogProduct[] = [];
+  let categories: Category[] = [];
+  let pricingRule = defaultPricingRule;
+  let batchTiers = defaultPricingBatchTiers;
+
+  try {
+    [products, categories, pricingRule, batchTiers] = await Promise.all([
+      catalogAccess.listCatalogProducts({ publicationStatus: "published" }),
+      catalogAccess.listCategories(),
+      getGlobalPricingRule(),
+      listGlobalPricingBatchTiers(),
+    ]);
+  } catch (error) {
+    console.error("Nao foi possivel carregar o catalogo publico.", error);
+  }
   const host = requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? "http";
   const siteOrigin = `${protocol}://${host}`;

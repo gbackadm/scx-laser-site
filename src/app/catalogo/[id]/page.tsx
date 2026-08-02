@@ -12,12 +12,15 @@ import {
 import { getCatalogAccess } from "@/domain/catalog/access";
 import { toPublicCatalogProducts } from "@/domain/catalog/publicProducts";
 import type { PublicCatalogPriceTier } from "@/domain/catalog/publicTypes";
+import type { CatalogProduct, Category } from "@/domain/catalog/types";
 import {
   getSiteSettings,
   siteWhatsappUrl,
   type SiteSettings,
 } from "@/domain/site/settings";
 import {
+  defaultPricingBatchTiers,
+  defaultPricingRule,
   getGlobalPricingRule,
   listGlobalPricingBatchTiers,
 } from "@/domain/pricing/rules";
@@ -86,14 +89,22 @@ function PriceTierList({
 export default async function PublicProductPage({ params }: PublicProductPageProps) {
   const { id } = await params;
   const catalogAccess = getCatalogAccess();
-  const [products, categories, pricingRule, batchTiers, siteSettings] =
-    await Promise.all([
-    catalogAccess.listCatalogProducts({ publicationStatus: "published" }),
-    catalogAccess.listCategories(),
-    getGlobalPricingRule(),
-    listGlobalPricingBatchTiers(),
-    getSiteSettings(),
-  ]);
+  const siteSettings = await getSiteSettings();
+  let products: CatalogProduct[] = [];
+  let categories: Category[] = [];
+  let pricingRule = defaultPricingRule;
+  let batchTiers = defaultPricingBatchTiers;
+
+  try {
+    [products, categories, pricingRule, batchTiers] = await Promise.all([
+      catalogAccess.listCatalogProducts({ publicationStatus: "published" }),
+      catalogAccess.listCategories(),
+      getGlobalPricingRule(),
+      listGlobalPricingBatchTiers(),
+    ]);
+  } catch (error) {
+    console.error("Nao foi possivel carregar a pagina publica do produto.", error);
+  }
   const product = toPublicCatalogProducts(
     products,
     categories,

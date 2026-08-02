@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDatabasePool } from "@/domain/catalog/db";
+import { getDatabasePool, isDatabaseConfigured } from "@/domain/catalog/db";
 
 export type PricingRoundingMode =
   | "none"
@@ -258,21 +258,34 @@ export function calculateBatchTierPrices(
 }
 
 export async function getGlobalPricingRule() {
-  const result = await getDatabasePool().query<PricingRuleRow>(
-    `
-      SELECT *
-      FROM scx_catalog_pricing_rules
-      WHERE scope = 'global'
-        AND is_active = true
-      ORDER BY updated_at DESC
-      LIMIT 1
-    `,
-  );
+  if (!isDatabaseConfigured()) {
+    return defaultPricingRule;
+  }
 
-  return result.rows[0] ? mapPricingRule(result.rows[0]) : defaultPricingRule;
+  try {
+    const result = await getDatabasePool().query<PricingRuleRow>(
+      `
+        SELECT *
+        FROM scx_catalog_pricing_rules
+        WHERE scope = 'global'
+          AND is_active = true
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `,
+    );
+
+    return result.rows[0] ? mapPricingRule(result.rows[0]) : defaultPricingRule;
+  } catch (error) {
+    console.error("Nao foi possivel carregar a regra global de precos.", error);
+    return defaultPricingRule;
+  }
 }
 
 export async function listGlobalPricingBatchTiers() {
+  if (!isDatabaseConfigured()) {
+    return defaultPricingBatchTiers;
+  }
+
   try {
     const result = await getDatabasePool().query<PricingBatchTierRow>(
       `
@@ -297,7 +310,8 @@ export async function listGlobalPricingBatchTiers() {
       }
     }
 
-    throw error;
+    console.error("Nao foi possivel carregar as faixas de preco.", error);
+    return defaultPricingBatchTiers;
   }
 }
 
