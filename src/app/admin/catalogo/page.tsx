@@ -80,9 +80,6 @@ export default async function AdminCatalogPage({
     );
   }
 
-  const isDemoEnabled =
-    process.env.ADMIN_DEMO_MODE === "enabled" ||
-    process.env.NODE_ENV === "development";
   const catalogAccess = getCatalogAccess();
   const [catalogProducts, categories, pricingRule, batchTiers] = await Promise.all([
     catalogAccess.listCatalogProducts(),
@@ -113,7 +110,7 @@ export default async function AdminCatalogPage({
     new Set(adminProducts.map((product) => product.category)),
   );
   const sourceLabel = process.env.DATABASE_URL
-    ? "PostgreSQL local"
+    ? "PostgreSQL"
     : "Dados demonstrativos locais";
   const message = catalogFeedbackMessage(resolvedSearchParams);
 
@@ -182,24 +179,14 @@ export default async function AdminCatalogPage({
           </div>
         ) : null}
 
-        {isDemoEnabled ? (
-          <CatalogPanel
-            categories={adminCategories}
-            products={adminProducts}
-            sourceLabel={sourceLabel}
-            canEdit={canEditCatalog}
-            canPublish={canPublishCatalog}
-            canSync={canSyncSupplier}
-          />
-        ) : (
-          <section className="rounded-md border border-white/10 bg-[#0d0f10] p-6">
-            <h1 className="text-2xl font-black">Catalogo bloqueado</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300">
-              Em ambientes fora de desenvolvimento, habilite explicitamente uma
-              estrategia de autenticacao real antes de liberar o painel.
-            </p>
-          </section>
-        )}
+        <CatalogPanel
+          categories={adminCategories}
+          products={adminProducts}
+          sourceLabel={sourceLabel}
+          canEdit={canEditCatalog}
+          canPublish={canPublishCatalog}
+          canSync={canSyncSupplier}
+        />
       </div>
     </main>
   );
