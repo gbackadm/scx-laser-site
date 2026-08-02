@@ -3,55 +3,55 @@ import Link from "next/link";
 const galleryItems = [
   {
     title: "Caneca metálica gravada",
-    imageSrc: "/images/gallery/caneca-metalica-gravada.png",
+    imageSrc: "/images/gallery/caneca-metalica-gravada.webp",
     placeholder:
       "radial-gradient(ellipse at 34% 38%, rgba(218,221,224,0.36), transparent 24%), linear-gradient(112deg, transparent 0 34%, rgba(255,255,255,0.16) 34% 38%, transparent 38% 100%), radial-gradient(circle at 76% 68%, rgba(225,18,27,0.2), transparent 22%), #0b0d0e",
   },
   {
     title: "Garrafa térmica SCX Laser",
-    imageSrc: "/images/gallery/garrafa-termica-scx-laser.png",
+    imageSrc: "/images/gallery/garrafa-termica-scx-laser.webp",
     placeholder:
       "repeating-linear-gradient(28deg, rgba(255,255,255,0.045) 0 1px, transparent 1px 8px), radial-gradient(circle at 58% 40%, rgba(168,112,76,0.46), transparent 28%), radial-gradient(circle at 42% 54%, rgba(225,18,27,0.14), transparent 20%), linear-gradient(135deg,#241713 0%,#090706 58%,#1a100d 100%)",
   },
   {
     title: "Cartão metálico NFC",
-    imageSrc: "/images/gallery/cartao-metal-nfc.png",
+    imageSrc: "/images/gallery/cartao-metal-nfc.webp",
     placeholder:
       "radial-gradient(circle at 50% 43%, rgba(230,231,233,0.48), transparent 18%), radial-gradient(circle at 50% 43%, rgba(225,18,27,0.18), transparent 34%), linear-gradient(135deg, transparent 0 44%, rgba(255,255,255,0.18) 44% 46%, transparent 46% 100%), #090b0c",
   },
   {
     title: "Copo térmico gravado",
-    imageSrc: "/images/gallery/copo-termico-gravado.png",
+    imageSrc: "/images/gallery/copo-termico-gravado.webp",
     placeholder:
       "linear-gradient(105deg, transparent 0 38%, rgba(255,255,255,0.18) 38% 41%, transparent 41% 100%), repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 12px), radial-gradient(circle at 42% 38%, rgba(210,213,216,0.28), transparent 26%), #090a0b",
   },
   {
     title: "Sacola personalizada",
-    imageSrc: "/images/gallery/sacola-personalizada.png",
+    imageSrc: "/images/gallery/sacola-personalizada.webp",
     placeholder:
       "radial-gradient(circle at 56% 45%, rgba(255,255,255,0.9), transparent 3%), radial-gradient(circle at 56% 45%, rgba(225,18,27,0.62), transparent 10%), radial-gradient(circle at 56% 45%, rgba(225,18,27,0.26), transparent 28%), linear-gradient(115deg, rgba(210,213,216,0.22) 0 18%, transparent 18% 100%), #08090a",
   },
   {
     title: "Isqueiro personalizado",
-    imageSrc: "/images/gallery/isqueiro-personalizado.png",
+    imageSrc: "/images/gallery/isqueiro-personalizado.webp",
     placeholder:
       "repeating-linear-gradient(90deg, rgba(255,255,255,0.2) 0 5px, transparent 5px 12px), repeating-linear-gradient(0deg, rgba(255,255,255,0.16) 0 5px, transparent 5px 12px), radial-gradient(circle at 76% 28%, rgba(225,18,27,0.2), transparent 18%), linear-gradient(135deg,#d9d9d9,#9f9f9f)",
   },
   {
     title: "Anel com gravação digital",
-    imageSrc: "/images/gallery/anel-gravacao-digital.png",
+    imageSrc: "/images/gallery/anel-gravacao-digital.webp",
     placeholder:
       "radial-gradient(circle at 50% 43%, rgba(230,231,233,0.48), transparent 18%), radial-gradient(circle at 50% 43%, rgba(225,18,27,0.18), transparent 34%), #090b0c",
   },
   {
     title: "Pingente metálico com onda sonora",
-    imageSrc: "/images/gallery/pingente-metalico-onda-sonora.png",
+    imageSrc: "/images/gallery/pingente-metalico-onda-sonora.webp",
     placeholder:
       "linear-gradient(105deg, transparent 0 38%, rgba(255,255,255,0.18) 38% 41%, transparent 41% 100%), radial-gradient(circle at 42% 38%, rgba(210,213,216,0.28), transparent 26%), #090a0b",
   },
   {
     title: "Embalagem personalizada",
-    imageSrc: "/images/gallery/embalagem-personalizada.png",
+    imageSrc: "/images/gallery/embalagem-personalizada.webp",
     placeholder:
       "repeating-linear-gradient(90deg, rgba(255,255,255,0.2) 0 5px, transparent 5px 12px), repeating-linear-gradient(0deg, rgba(255,255,255,0.16) 0 5px, transparent 5px 12px), radial-gradient(circle at 76% 28%, rgba(225,18,27,0.2), transparent 18%), linear-gradient(135deg,#d9d9d9,#9f9f9f)",
   },

@@ -4,7 +4,11 @@ import Link from "next/link";
 
 import { heroBenefits, heroButtons } from "@/data/site";
 
-export function Hero() {
+type HeroProps = {
+  whatsappUrl?: string;
+};
+
+export function Hero({ whatsappUrl }: HeroProps) {
   return (
     <section
       id="inicio"
@@ -12,7 +16,7 @@ export function Hero() {
     >
       <div className="absolute inset-y-0 right-0 -z-10 h-full w-full lg:w-[66%]">
         <Image
-          src="/images/hero-machine-reference.png"
+          src="/images/hero-machine-reference.webp"
           alt="Máquina laser gravando uma placa metálica com iluminação vermelha"
           fill
           priority
@@ -51,7 +55,7 @@ export function Hero() {
             {heroButtons.map((button) => (
               <Link
                 key={button.label}
-                href={button.href}
+                href={button.variant === "primary" && whatsappUrl ? whatsappUrl : button.href}
                 className={
                   button.variant === "primary"
                     ? "inline-flex min-h-[42px] w-full items-center justify-center gap-2 rounded border border-red-400/50 px-6 py-3 text-xs font-black uppercase tracking-normal text-white shadow-laser transition hover:bg-red-600 sm:w-auto sm:min-w-[182px]"

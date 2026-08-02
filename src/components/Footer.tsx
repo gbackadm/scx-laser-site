@@ -1,11 +1,14 @@
 import { Facebook, Instagram, Linkedin, Mail, MapPin, MessageCircle } from "lucide-react";
 import Link from "next/link";
 
+import { scxContact, scxWhatsappUrl } from "@/data/contact";
+
 const quickLinks = [
   { label: "Início", href: "#inicio" },
   { label: "Serviços", href: "#servicos" },
   { label: "Materiais", href: "#materiais" },
   { label: "Galeria", href: "#galeria" },
+  { label: "Catálogo", href: "/catalogo" },
   { label: "Orçamento", href: "#orcamento" },
   { label: "Contato", href: "#contato" },
 ];
@@ -16,13 +19,25 @@ const socialLinks = [
   { label: "LinkedIn", href: "#", Icon: Linkedin },
 ];
 
-const contactItems = [
-  { label: "(47) 99722-8686", href: "https://wa.me/5547997228686", Icon: MessageCircle },
-  { label: "contato@scxlaser.com.br", href: "mailto:contato@scxlaser.com.br", Icon: Mail },
-  { label: "Santa Catarina - Brasil", href: "#", Icon: MapPin },
-];
+type FooterProps = {
+  whatsappUrl?: string;
+  whatsappDisplay?: string;
+  email?: string;
+  location?: string;
+};
 
-export function Footer() {
+export function Footer({
+  whatsappUrl = scxWhatsappUrl(),
+  whatsappDisplay = scxContact.whatsappDisplay,
+  email = scxContact.email,
+  location = scxContact.location,
+}: FooterProps) {
+  const currentContactItems = [
+    { label: whatsappDisplay, href: whatsappUrl, Icon: MessageCircle },
+    { label: email, href: `mailto:${email}`, Icon: Mail },
+    { label: location, href: "#", Icon: MapPin },
+  ];
+
   return (
     <footer
       id="contato"
@@ -33,7 +48,7 @@ export function Footer() {
           <div>
             <Link href="#inicio" aria-label="SCX Laser" className="inline-flex">
               <img
-                src="/images/logo-scx-oficial.png"
+                src="/images/logo-scx-oficial.webp"
                 alt="SCX Laser"
                 width={250}
                 height={166}
@@ -80,7 +95,7 @@ export function Footer() {
               Contato
             </h2>
             <div className="mt-5 grid gap-4 text-sm text-zinc-300">
-              {contactItems.map(({ label, href, Icon }) => (
+              {currentContactItems.map(({ label, href, Icon }) => (
                 <Link
                   key={label}
                   href={href}

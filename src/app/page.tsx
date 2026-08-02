@@ -7,21 +7,30 @@ import { Footer } from "@/components/Footer";
 import { Gallery } from "@/components/Gallery";
 import { HowItWorks } from "@/components/HowItWorks";
 import { Services } from "@/components/Services";
+import { getSiteSettings, siteWhatsappUrl } from "@/domain/site/settings";
 
-export default function Home() {
+export default async function Home() {
+  const siteSettings = await getSiteSettings();
+  const whatsappUrl = siteWhatsappUrl(siteSettings);
+
   return (
     <>
-      <Header />
+      <Header whatsappUrl={whatsappUrl} />
       <main>
-        <Hero />
+        <Hero whatsappUrl={whatsappUrl} />
         <Services />
         <Gallery />
         <HowItWorks />
         <Differentials />
-        <FinalCTA />
-        <Footer />
+        <FinalCTA whatsappUrl={whatsappUrl} />
+        <Footer
+          email={siteSettings.email}
+          location={siteSettings.locationLabel}
+          whatsappDisplay={siteSettings.whatsappDisplay}
+          whatsappUrl={whatsappUrl}
+        />
       </main>
-      <FloatingWhatsApp />
+      <FloatingWhatsApp whatsappUrl={whatsappUrl} />
     </>
   );
 }

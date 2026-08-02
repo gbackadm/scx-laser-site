@@ -3,7 +3,11 @@ import Link from "next/link";
 
 import { headerCta } from "@/data/site";
 
-export function FinalCTA() {
+type FinalCTAProps = {
+  whatsappUrl?: string;
+};
+
+export function FinalCTA({ whatsappUrl = headerCta.href }: FinalCTAProps) {
   return (
     <section className="relative overflow-hidden border-b border-white/10 bg-black px-5 py-11 text-white sm:px-8 lg:px-12">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(225,18,27,0.2),transparent_28%),radial-gradient(circle_at_86%_78%,rgba(225,18,27,0.16),transparent_30%),linear-gradient(90deg,#1a0305_0%,#0b0d0e_42%,#3d0609_100%)]" />
@@ -24,14 +28,14 @@ export function FinalCTA() {
 
         <div className="flex w-full flex-col gap-3 sm:w-auto sm:min-w-[260px]">
           <Link
-            href={headerCta.href}
+            href={whatsappUrl}
             className="inline-flex min-h-[50px] items-center justify-center gap-3 rounded border border-red-300/45 bg-[linear-gradient(180deg,#ed1b23_0%,#b80f16_100%)] px-6 py-3.5 text-center text-xs font-black uppercase tracking-normal text-white shadow-[0_0_30px_rgba(225,18,27,0.26)] transition duration-300 hover:bg-red-600 hover:shadow-[0_0_38px_rgba(225,18,27,0.36)] sm:px-8"
           >
             <MessageCircle size={20} />
             Solicitar orçamento
           </Link>
           <Link
-            href={headerCta.href}
+            href={whatsappUrl}
             className="inline-flex min-h-[50px] items-center justify-center gap-3 rounded border border-laser/70 bg-black/30 px-6 py-3.5 text-center text-xs font-black uppercase tracking-normal text-white transition duration-300 hover:bg-laser/10 hover:shadow-[0_0_24px_rgba(225,18,27,0.18)] sm:px-8"
           >
             Falar no WhatsApp

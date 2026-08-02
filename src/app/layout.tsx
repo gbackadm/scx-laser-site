@@ -24,9 +24,9 @@ export const metadata: Metadata = {
     locale: "pt_BR",
   },
   icons: {
-    icon: "/images/logo-scx-oficial.png",
-    shortcut: "/images/logo-scx-oficial.png",
-    apple: "/images/logo-scx-oficial.png",
+    icon: "/images/favicon-scx-logo.png",
+    shortcut: "/images/favicon-scx-logo.png",
+    apple: "/images/favicon-scx-logo.png",
   },
 };
 

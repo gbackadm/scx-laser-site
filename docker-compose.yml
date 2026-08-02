@@ -1,0 +1,14 @@
+services:
+  web:
+    build:
+      context: .
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      ADMIN_DEMO_MODE: enabled
+      DATABASE_URL: ${DATABASE_URL:-}
+      ASIA_IMPORT_API_KEY: ${ASIA_IMPORT_API_KEY:-}
+      ASIA_IMPORT_SECRET_KEY: ${ASIA_IMPORT_SECRET_KEY:-}
+      ASIA_IMPORT_BASE_URL: ${ASIA_IMPORT_BASE_URL:-https://api.asiaimport.com.br/}
+    restart: unless-stopped

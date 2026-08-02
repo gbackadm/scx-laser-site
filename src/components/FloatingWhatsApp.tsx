@@ -1,7 +1,15 @@
 import { MessageCircle } from "lucide-react";
 import Link from "next/link";
 
-export function FloatingWhatsApp() {
+import { scxWhatsappUrl } from "@/data/contact";
+
+type FloatingWhatsAppProps = {
+  whatsappUrl?: string;
+};
+
+export function FloatingWhatsApp({
+  whatsappUrl = scxWhatsappUrl(),
+}: FloatingWhatsAppProps) {
   return (
     <div className="fixed bottom-7 right-5 z-[60] flex items-center gap-3 sm:bottom-8 sm:right-7">
       <div className="relative hidden rounded-md border border-white/12 bg-black/82 px-4 py-2 text-right shadow-[0_12px_28px_rgba(0,0,0,0.34)] backdrop-blur-md sm:block">
@@ -15,7 +23,7 @@ export function FloatingWhatsApp() {
       </div>
 
       <Link
-        href="https://wa.me/5547997228686"
+        href={whatsappUrl}
         target="_blank"
         rel="noopener noreferrer"
         aria-label="Chamar no WhatsApp"

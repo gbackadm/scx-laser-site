@@ -12,7 +12,7 @@ const services = [
     title: "Brindes Corporativos",
     description: "Canetas, chaveiros, copos, placas e medalhas.",
     Icon: BriefcaseBusiness,
-    imageSrc: "/images/services/brindes-corporativos-caneta-scx-laser.png",
+    imageSrc: "/images/services/brindes-corporativos-caneta-scx-laser.webp",
     imageStyle:
       "radial-gradient(circle at 24% 22%, rgba(210,213,216,0.34), transparent 28%), linear-gradient(135deg, #181b1d 0%, #070808 52%, #111315 100%)",
   },
@@ -20,7 +20,7 @@ const services = [
     title: "Produtos Personalizados",
     description: "Presentes, decoração e itens exclusivos.",
     Icon: UserRound,
-    imageSrc: "/images/services/produtos-personalizados-copo-sua-marca.png",
+    imageSrc: "/images/services/produtos-personalizados-copo-sua-marca.webp",
     imageStyle:
       "radial-gradient(circle at 50% 18%, rgba(210,213,216,0.32), transparent 24%), linear-gradient(160deg, #222426 0%, #08090a 48%, #151719 100%)",
   },
@@ -28,7 +28,7 @@ const services = [
     title: "Plaquetas e Tags",
     description: "QR Code, NFC e identificação.",
     Icon: Badge,
-    imageSrc: "/images/services/plaquetas-tags-nfc-qrcode.png",
+    imageSrc: "/images/services/plaquetas-tags-nfc-qrcode.webp",
     imageStyle:
       "linear-gradient(135deg, rgba(200,201,204,0.2) 0 18%, transparent 18% 100%), radial-gradient(circle at 82% 28%, rgba(225,18,27,0.18), transparent 26%), #0b0d0e",
   },
@@ -36,7 +36,7 @@ const services = [
     title: "Peças Técnicas",
     description: "Componentes industriais e gravações técnicas.",
     Icon: Cog,
-    imageSrc: "/images/services/pecas-tecnicas-aluminio-gravado.png",
+    imageSrc: "/images/services/pecas-tecnicas-aluminio-gravado.webp",
     imageStyle:
       "repeating-linear-gradient(135deg, rgba(255,255,255,0.1) 0 1px, transparent 1px 14px), radial-gradient(circle at 32% 42%, rgba(200,201,204,0.24), transparent 26%), #090b0c",
   },
@@ -44,7 +44,7 @@ const services = [
     title: "Couro Sintético",
     description: "Carteiras, etiquetas e brindes.",
     Icon: ScanLine,
-    imageSrc: "/images/services/couro-sintetico-logo-scx-laser.png",
+    imageSrc: "/images/services/couro-sintetico-logo-scx-laser.webp",
     imageStyle:
       "radial-gradient(circle at 60% 38%, rgba(145,89,55,0.36), transparent 34%), linear-gradient(135deg, #241713 0%, #0a0807 55%, #19110f 100%)",
   },
@@ -52,7 +52,7 @@ const services = [
     title: "Acrílico e Vidro",
     description: "Acabamento sofisticado e preciso.",
     Icon: Gem,
-    imageSrc: "/images/services/acrilico-vidro-placa-scx-laser.png",
+    imageSrc: "/images/services/acrilico-vidro-placa-scx-laser.webp",
     imageStyle:
       "linear-gradient(135deg, rgba(255,255,255,0.26) 0 1px, transparent 1px 100%), radial-gradient(circle at 72% 30%, rgba(210,213,216,0.32), transparent 24%), #090b0c",
   },

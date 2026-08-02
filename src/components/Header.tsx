@@ -6,7 +6,11 @@ import { useState } from "react";
 
 import { headerCta, navigationLinks } from "@/data/site";
 
-export function Header() {
+type HeaderProps = {
+  whatsappUrl?: string;
+};
+
+export function Header({ whatsappUrl = headerCta.href }: HeaderProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -19,7 +23,7 @@ export function Header() {
           onClick={() => setIsOpen(false)}
         >
           <img
-            src="/images/logo-scx-oficial.png"
+            src="/images/logo-scx-oficial.webp"
             alt="SCX Laser"
             width={240}
             height={160}
@@ -27,7 +31,7 @@ export function Header() {
           />
         </Link>
 
-        <nav className="hidden items-center justify-center gap-9 lg:flex" aria-label="Principal">
+        <nav className="hidden items-center justify-center gap-6 xl:gap-8 lg:flex" aria-label="Principal">
           {navigationLinks.map((link, index) => (
             <Link
               key={link.href}
@@ -46,7 +50,7 @@ export function Header() {
 
         <div className="hidden justify-self-end lg:block">
           <Link
-            href={headerCta.href}
+            href={whatsappUrl}
             className="inline-flex h-10 items-center gap-2 rounded px-4 text-[0.66rem] font-black uppercase tracking-normal text-white shadow-laser transition hover:bg-red-600"
             style={{ background: "linear-gradient(180deg, #ee1b23 0%, #bc1017 100%)" }}
           >
@@ -80,7 +84,7 @@ export function Header() {
               </Link>
             ))}
             <Link
-              href={headerCta.href}
+              href={whatsappUrl}
               className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-laser px-4 py-3 text-center text-xs font-bold uppercase tracking-normal text-white shadow-laser sm:h-12 sm:text-sm"
               onClick={() => setIsOpen(false)}
             >

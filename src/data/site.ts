@@ -1,23 +1,26 @@
 import { BadgeCheck, Crosshair, ShieldCheck } from "lucide-react";
 
+import { scxWhatsappUrl } from "@/data/contact";
+
 export const navigationLinks = [
   { label: "Início", href: "#inicio" },
   { label: "Serviços", href: "#servicos" },
   { label: "Materiais", href: "#materiais" },
   { label: "Galeria", href: "#galeria" },
+  { label: "Catálogo", href: "/catalogo" },
   { label: "Orçamento", href: "#orcamento" },
   { label: "Contato", href: "#contato" },
 ];
 
 export const headerCta = {
   label: "Orçamento via WhatsApp",
-  href: "https://wa.me/5500000000000",
+  href: scxWhatsappUrl(),
 };
 
 export const heroButtons = [
   {
     label: "Pedir orçamento",
-    href: "https://wa.me/5500000000000",
+    href: scxWhatsappUrl(),
     variant: "primary",
   },
   {
