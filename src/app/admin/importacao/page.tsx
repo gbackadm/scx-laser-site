@@ -41,7 +41,7 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
 
   const message =
     params?.erro === "credenciais"
-      ? "Configure ASIA_IMPORT_API_KEY e ASIA_IMPORT_SECRET_KEY no .env.local antes de sincronizar."
+      ? "Configure ASIA_IMPORT_API_KEY e ASIA_IMPORT_SECRET_KEY no ambiente do deploy. Em desenvolvimento local, use .env.local."
       : params?.erro === "permissao"
         ? "Seu usuario nao tem permissao para executar esta acao."
         : params?.erro === "sincronizacao"
@@ -133,7 +133,11 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
               <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
                 Chave API
               </p>
-              <p className="mt-2 text-sm font-bold">
+              <p
+                className={`mt-2 text-sm font-bold ${
+                  config.hasApiKey ? "text-emerald-200" : "text-amber-200"
+                }`}
+              >
                 {config.hasApiKey ? "Configurada" : "Pendente"}
               </p>
             </div>
@@ -141,7 +145,11 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
               <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
                 Senha API
               </p>
-              <p className="mt-2 text-sm font-bold">
+              <p
+                className={`mt-2 text-sm font-bold ${
+                  config.hasSecretKey ? "text-emerald-200" : "text-amber-200"
+                }`}
+              >
                 {config.hasSecretKey ? "Configurada" : "Pendente"}
               </p>
             </div>
