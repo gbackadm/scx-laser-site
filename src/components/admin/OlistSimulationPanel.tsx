@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  Link2,
   PlayCircle,
   RefreshCw,
   Send,
@@ -72,9 +73,16 @@ function Metric({
 export function OlistSimulationPanel({
   settings,
   runs,
+  connection,
 }: {
   settings: AdminOlistSettings;
   runs: AdminOlistRun[];
+  connection: {
+    configured: boolean;
+    connected: boolean;
+    accessExpiresAt?: string;
+    refreshExpiresAt?: string;
+  };
 }) {
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
@@ -82,6 +90,45 @@ export function OlistSimulationPanel({
 
   return (
     <section className="grid gap-5">
+      <div className="order-1 rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
+              Conexao oficial
+            </p>
+            <div className="mt-2 flex items-center gap-3">
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${
+                  connection.connected ? "bg-emerald-400" : "bg-amber-400"
+                }`}
+                title={connection.connected ? "Conta conectada" : "Autorizacao pendente"}
+              />
+              <h2 className="text-xl font-black text-white sm:text-2xl">
+                {connection.connected ? "Olist conectada" : "Conectar conta Olist"}
+              </h2>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-zinc-300">
+              {connection.connected
+                ? "A API atual esta autorizada para enviar produtos, variacoes e imagens."
+                : "Autorize uma vez para liberar o envio completo e a renovacao automatica do acesso."}
+            </p>
+          </div>
+          {!connection.connected ? (
+            <a
+              href="/admin/api/olist/oauth/connect"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-emerald-300/35 px-4 text-sm font-black text-emerald-100 transition hover:border-emerald-200 hover:bg-emerald-400/10"
+            >
+              <Link2 size={17} />
+              Conectar Olist
+            </a>
+          ) : (
+            <div className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">
+              Renovacao automatica ativa
+            </div>
+          )}
+        </div>
+      </div>
+
       <details className="group order-2 rounded-md border border-white/10 bg-[#0d0f10] shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5 sm:p-6">
           <div>
@@ -201,7 +248,7 @@ export function OlistSimulationPanel({
         </form>
       </details>
 
-      <div className="order-1 rounded-md border border-white/10 bg-[#0d0f10] shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
+      <div className="order-2 rounded-md border border-white/10 bg-[#0d0f10] shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
       <div className="border-b border-white/10 p-5 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>

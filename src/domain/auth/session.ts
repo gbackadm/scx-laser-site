@@ -86,8 +86,8 @@ export async function getCurrentAdminSession() {
       `,
       [hashSessionToken(token)],
     );
-  } catch (error) {
-    console.error("Nao foi possivel carregar a sessao administrativa.", error);
+  } catch {
+    console.warn("Nao foi possivel carregar a sessao administrativa.");
     return null;
   }
 
@@ -105,8 +105,8 @@ export async function getCurrentAdminSession() {
       `,
       [row.session_id],
     );
-  } catch (error) {
-    console.error("Nao foi possivel atualizar a sessao administrativa.", error);
+  } catch {
+    console.warn("Nao foi possivel atualizar a sessao administrativa.");
   }
 
   return {
@@ -148,8 +148,8 @@ export async function revokeCurrentAdminSession() {
         `,
         [hashSessionToken(token)],
       );
-    } catch (error) {
-      console.error("Nao foi possivel encerrar a sessao administrativa.", error);
+    } catch {
+      console.warn("Nao foi possivel encerrar a sessao administrativa.");
     }
   }
 

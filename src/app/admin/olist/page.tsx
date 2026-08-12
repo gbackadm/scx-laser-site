@@ -6,6 +6,7 @@ import { OlistSimulationPanel } from "@/components/admin/OlistSimulationPanel";
 import { requireAdminSession } from "@/domain/auth/session";
 import { roleCan } from "@/domain/catalog/permissions";
 import { getOlistSettings, listOlistRuns } from "@/domain/olist/repository";
+import { getOlistConnectionStatus } from "@/domain/olist/oauth";
 
 export const metadata = {
   title: "Admin SCX Laser | Olist",
@@ -17,12 +18,25 @@ type AdminOlistPageProps = {
   searchParams?: Promise<{
     erro?: string;
     salvo?: string;
+    conectado?: string;
   }>;
 };
 
 function feedbackMessage(params: Awaited<AdminOlistPageProps["searchParams"]>) {
   if (params?.erro === "permissao") {
     return "Seu usuario nao tem permissao para alterar configuracoes Olist.";
+  }
+
+  if (params?.erro === "oauth_estado") {
+    return "A autorizacao Olist perdeu a validade. Tente conectar novamente.";
+  }
+
+  if (params?.erro === "oauth" || params?.erro === "oauth_token") {
+    return "A Olist nao concluiu a autorizacao. Confira a URL de redirecionamento do aplicativo.";
+  }
+
+  if (params?.conectado) {
+    return "Conta Olist conectada com sucesso.";
   }
 
   if (params?.salvo) {
@@ -54,9 +68,10 @@ export default async function AdminOlistPage({
     );
   }
 
-  const [settings, runs] = await Promise.all([
+  const [settings, runs, connection] = await Promise.all([
     getOlistSettings(),
     listOlistRuns(10),
+    getOlistConnectionStatus(),
   ]);
   const message = feedbackMessage(params);
 
@@ -123,7 +138,11 @@ export default async function AdminOlistPage({
             {message}
           </div>
         ) : null}
-        <OlistSimulationPanel settings={settings} runs={runs} />
+        <OlistSimulationPanel
+          settings={settings}
+          runs={runs}
+          connection={connection}
+        />
       </div>
     </main>
   );
