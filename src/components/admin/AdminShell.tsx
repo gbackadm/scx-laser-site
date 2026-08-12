@@ -76,12 +76,14 @@ export function AdminShell({ session, children }: AdminShellProps) {
           />
           <div>
             <p className="text-sm font-black text-white">SCX Laser</p>
-            <p className="text-xs font-bold text-zinc-500">Administracao</p>
+            <p className="text-xs font-bold text-zinc-500">
+              Administracao{process.env.NODE_ENV === "development" ? " local" : ""}
+            </p>
           </div>
         </Link>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4" aria-label="Administracao">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label="Administracao">
         {visibleNavigation.map((item) => {
           const Icon = item.icon;
           const active = isActive(item.href);

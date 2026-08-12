@@ -55,6 +55,9 @@ export default async function NewCatalogProductPage({
   const canEdit = roleCan(session.role, "catalog:edit");
   const canPublish = roleCan(session.role, "catalog:publish");
   const message = feedbackMessage(params);
+  const categoryOptions = Array.from(
+    new Set(categories.map((category) => category.name.trim()).filter(Boolean)),
+  ).sort((a, b) => a.localeCompare(b, "pt-BR"));
 
   if (!canEdit) {
     return (
@@ -135,7 +138,7 @@ export default async function NewCatalogProductPage({
           </p>
 
           <ManualProductForm
-            categories={categories.map((category) => category.name)}
+            categories={categoryOptions}
             canPublish={canPublish}
           />
         </section>

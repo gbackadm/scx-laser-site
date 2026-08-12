@@ -49,7 +49,7 @@ const textareaClassName =
   "rounded border border-white/12 bg-black/35 px-3 py-3 text-sm leading-6 text-white outline-none placeholder:text-zinc-600 focus:border-laser";
 
 function RequiredMark() {
-  return <span className="text-laser">*</span>;
+  return <span aria-hidden="true" className="required-mark absolute right-0 top-0 text-laser">*</span>;
 }
 
 export function ManualProductForm({
@@ -111,8 +111,30 @@ export function ManualProductForm({
   );
 
   return (
-    <form action={createManualCatalogProduct} className="mt-6 grid gap-6">
+    <form action={createManualCatalogProduct} className="manual-product-form mt-6 grid gap-6">
       <input type="hidden" name="variants" value={variantsJson} />
+
+      <nav className="sticky top-16 z-20 -mx-5 grid grid-cols-4 gap-1 border-y border-white/10 bg-[#0d0f10]/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:top-0">
+        <a href="#identificacao" className="rounded px-1 py-2 text-center text-[0.68rem] font-black text-zinc-300 transition hover:bg-white/5 hover:text-white sm:px-3 sm:text-xs">
+          1. Produto
+        </a>
+        <a href="#logistica" className="rounded px-1 py-2 text-center text-[0.68rem] font-black text-zinc-300 transition hover:bg-white/5 hover:text-white sm:px-3 sm:text-xs">
+          2. Logistica
+        </a>
+        <a href="#fotos" className="rounded px-1 py-2 text-center text-[0.68rem] font-black text-zinc-300 transition hover:bg-white/5 hover:text-white sm:px-3 sm:text-xs">
+          3. Fotos
+        </a>
+        <a href="#variacoes" className="rounded px-1 py-2 text-center text-[0.68rem] font-black text-zinc-300 transition hover:bg-white/5 hover:text-white sm:px-3 sm:text-xs">
+          4. Variacoes
+        </a>
+      </nav>
+
+      <section id="identificacao" className="grid scroll-mt-36 gap-4 border-b border-white/10 pb-6 lg:scroll-mt-20">
+        <div>
+          <p className="text-xs font-black uppercase text-laser">Etapa 1</p>
+          <h2 className="mt-1 text-xl font-black text-white">Identificacao do produto</h2>
+          <p className="mt-1 text-xs text-zinc-500">Campos com * sao obrigatorios.</p>
+        </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <label className="grid gap-2 text-sm font-bold text-zinc-200">
@@ -186,6 +208,14 @@ export function ManualProductForm({
         <textarea name="description" rows={5} className={textareaClassName} />
       </label>
 
+      </section>
+
+      <section id="logistica" className="grid scroll-mt-36 gap-4 border-b border-white/10 pb-6 lg:scroll-mt-20">
+        <div>
+          <p className="text-xs font-black uppercase text-laser">Etapa 2</p>
+          <h2 className="mt-1 text-xl font-black text-white">Fornecedor e logistica</h2>
+        </div>
+
       <div className="grid gap-4 lg:grid-cols-3">
         <label className="grid gap-2 text-sm font-bold text-zinc-200">
           Fornecedor <RequiredMark />
@@ -250,6 +280,13 @@ export function ManualProductForm({
         </label>
       </div>
 
+      </section>
+
+      <section id="fotos" className="grid scroll-mt-36 gap-4 border-b border-white/10 pb-6 lg:scroll-mt-20">
+        <div>
+          <p className="text-xs font-black uppercase text-laser">Etapa 3</p>
+          <h2 className="mt-1 text-xl font-black text-white">Fotos do produto pai</h2>
+        </div>
       <label className="grid gap-2 text-sm font-bold text-zinc-200">
         <span className="inline-flex items-center gap-2">
           <ImagePlus size={17} /> Fotos do produto, uma URL por linha <RequiredMark />
@@ -262,8 +299,9 @@ export function ManualProductForm({
           className={textareaClassName}
         />
       </label>
+      </section>
 
-      <section className="grid gap-4 border-t border-white/10 pt-6">
+      <section id="variacoes" className="grid scroll-mt-36 gap-4 lg:scroll-mt-20">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
@@ -497,7 +535,7 @@ export function ManualProductForm({
         ))}
       </section>
 
-      <div className="flex flex-col gap-3 border-t border-white/10 pt-5 sm:flex-row sm:justify-end">
+      <div className="-mx-5 flex flex-col gap-3 border-t border-white/10 bg-[#0d0f10] px-5 pt-5 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6">
         <a
           href="/admin/catalogo"
           className="inline-flex min-h-11 items-center justify-center rounded border border-white/12 px-5 text-sm font-bold text-zinc-300 transition hover:border-laser hover:text-white"

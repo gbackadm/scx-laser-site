@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CheckCircle2, CircleAlert } from "lucide-react";
 
 import { logoutAdmin } from "@/app/admin/actions";
 import { AdminNotice } from "@/components/admin/AdminNotice";
@@ -22,6 +23,15 @@ export const metadata = {
 };
 
 export const dynamic = "force-dynamic";
+
+function formatDateTime(value?: string) {
+  if (!value) return "Nao agendada";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "America/Sao_Paulo",
+  }).format(new Date(value));
+}
 
 type ImportPageProps = {
   searchParams?: Promise<{
@@ -123,46 +133,31 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
             Asia Import
           </p>
           <h1 className="mt-2 text-2xl font-black text-white sm:text-3xl">
-            Importacao manual de produtos
+            Sincronizacao e revisao
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-300">
-            Busque produtos reais do fornecedor, escolhendo a quantidade alvo.
-            O sistema pagina a API automaticamente e mantem tudo fora do
-            catalogo publico ate revisao manual.
+            Atualize o catalogo automaticamente ou busque um produto especifico
+            para revisar agora.
           </p>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-3">
-            <div className="rounded border border-white/10 bg-black/30 p-4">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
-                Endpoint
-              </p>
-              <p className="mt-2 break-all text-sm text-zinc-200">
-                {config.baseUrl}
-              </p>
+          <div className="mt-5 flex flex-col gap-3 border-y border-white/10 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              {config.hasApiKey && config.hasSecretKey ? (
+                <CheckCircle2 size={18} className="text-emerald-300" />
+              ) : (
+                <CircleAlert size={18} className="text-amber-300" />
+              )}
+              <div>
+                <p className="font-bold text-white">
+                  {config.hasApiKey && config.hasSecretKey
+                    ? "Conexao configurada"
+                    : "Credenciais pendentes"}
+                </p>
+                <p className="mt-1 break-all text-xs text-zinc-500">{config.baseUrl}</p>
+              </div>
             </div>
-            <div className="rounded border border-white/10 bg-black/30 p-4">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
-                Chave API
-              </p>
-              <p
-                className={`mt-2 text-sm font-bold ${
-                  config.hasApiKey ? "text-emerald-200" : "text-amber-200"
-                }`}
-              >
-                {config.hasApiKey ? "Configurada" : "Pendente"}
-              </p>
-            </div>
-            <div className="rounded border border-white/10 bg-black/30 p-4">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
-                Senha API
-              </p>
-              <p
-                className={`mt-2 text-sm font-bold ${
-                  config.hasSecretKey ? "text-emerald-200" : "text-amber-200"
-                }`}
-              >
-                {config.hasSecretKey ? "Configurada" : "Pendente"}
-              </p>
+            <div className="text-xs font-bold text-zinc-400">
+              Ultima rotina: {formatDateTime(autoSyncSettings.lastAutoSyncAt)}
             </div>
           </div>
 
@@ -311,7 +306,7 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
             <div className="lg:col-span-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">
                 Proxima rotina:{" "}
-                {autoSyncSettings.nextAutoSyncAfter ?? "sem agendamento"}
+                {formatDateTime(autoSyncSettings.nextAutoSyncAfter)}
               </div>
               <button
                 type="submit"

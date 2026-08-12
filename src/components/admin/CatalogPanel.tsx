@@ -277,14 +277,10 @@ export function CatalogPanel({
               Catalogo
             </p>
             <h1 className="mt-2 text-2xl font-black text-white sm:text-3xl">
-              Produtos e gravacoes
+              Produtos
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-300">
-              Catalogo administrativo preparado para banco local, publicacao e
-              futura API autenticada.
-            </p>
-            <p className="mt-2 max-w-2xl text-xs font-bold uppercase tracking-[0.12em] text-emerald-200">
-              Lista completa para revisar produtos publicados, inativos e pendentes.
+              Gerencie cadastro, variacoes, estoque, publicacao e sincronizacao.
             </p>
             <p className="mt-2 text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">
               Origem: {sourceLabel}

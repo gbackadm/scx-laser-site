@@ -24,10 +24,10 @@ export default async function AdminIndex() {
   const canIntegrate = roleCan(session.role, "supplier:import");
 
   const metrics = [
-    { label: "Produtos", value: snapshot.catalog.total, detail: `${snapshot.catalog.published} publicados`, icon: Boxes },
-    { label: "Variacoes", value: snapshot.catalog.variants, detail: `${snapshot.catalog.variantsWithoutImages} sem imagem`, icon: PackageCheck },
-    { label: "Inativos", value: snapshot.catalog.inactive, detail: `${snapshot.catalog.drafts} rascunhos`, icon: CircleAlert },
-    { label: "No Olist", value: snapshot.olist.mapped, detail: `${snapshot.olist.pending} pendentes`, icon: Store },
+    { label: "Produtos", value: snapshot.catalog.total, detail: `${snapshot.catalog.published} publicados`, icon: Boxes, href: "/admin/catalogo" },
+    { label: "Variacoes", value: snapshot.catalog.variants, detail: `${snapshot.catalog.variantsWithoutImages} sem imagem`, icon: PackageCheck, href: "/admin/catalogo" },
+    { label: "Inativos", value: snapshot.catalog.inactive, detail: `${snapshot.catalog.drafts} rascunhos`, icon: CircleAlert, href: "/admin/catalogo" },
+    { label: "No Olist", value: snapshot.olist.mapped, detail: `${snapshot.olist.pending} pendentes`, icon: Store, href: "/admin/olist" },
   ];
 
   return (
@@ -56,14 +56,14 @@ export default async function AdminIndex() {
           {metrics.map((metric) => {
             const Icon = metric.icon;
             return (
-              <div key={metric.label} className="border-b border-white/10 px-1 py-5 sm:px-5 sm:[&:nth-child(odd)]:border-r xl:border-b-0 xl:border-r xl:first:pl-1 xl:last:border-r-0">
+              <Link key={metric.label} href={metric.href} className="group border-b border-white/10 px-1 py-5 transition hover:bg-white/[0.025] sm:px-5 sm:[&:nth-child(odd)]:border-r xl:border-b-0 xl:border-r xl:first:pl-1 xl:last:border-r-0">
                 <div className="flex items-center justify-between gap-4">
                   <p className="text-sm font-bold text-zinc-400">{metric.label}</p>
-                  <Icon size={18} className="text-zinc-600" />
+                  <Icon size={18} className="text-zinc-600 transition group-hover:text-zinc-300" />
                 </div>
                 <p className="mt-3 text-3xl font-black text-white">{metric.value}</p>
                 <p className="mt-1 text-xs text-zinc-500">{metric.detail}</p>
-              </div>
+              </Link>
             );
           })}
         </section>
@@ -72,11 +72,6 @@ export default async function AdminIndex() {
           <section>
             <div className="flex items-center justify-between gap-4">
               <h2 className="text-lg font-black">Integracoes</h2>
-              {canIntegrate ? (
-                <Link href="/admin/importacao" className="text-sm font-bold text-zinc-400 transition hover:text-white">
-                  Configurar
-                </Link>
-              ) : null}
             </div>
             <div className="mt-4 divide-y divide-white/10 border-y border-white/10">
               <div className="grid gap-3 py-4 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -92,6 +87,11 @@ export default async function AdminIndex() {
                     {snapshot.supplier.enabled ? `Ativa a cada ${snapshot.supplier.intervalMinutes} min` : "Desativada"}
                   </span>
                   <span className="text-zinc-600">Pagina {snapshot.supplier.nextPage}</span>
+                  {canIntegrate ? (
+                    <Link href="/admin/importacao" aria-label="Abrir Asia Import" className="inline-flex h-9 w-9 items-center justify-center rounded border border-white/10 text-zinc-400 transition hover:border-laser hover:text-white">
+                      <ArrowRight size={16} />
+                    </Link>
+                  ) : null}
                 </div>
               </div>
               <div className="grid gap-3 py-4 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -102,11 +102,18 @@ export default async function AdminIndex() {
                     <p className="mt-1 text-xs text-zinc-500">Ultima execucao: {formatDate(snapshot.olist.lastSyncAt)}</p>
                   </div>
                 </div>
-                <span className={snapshot.olist.enabled ? "text-sm text-emerald-300" : "text-sm text-zinc-500"}>
-                  {snapshot.olist.enabled
-                    ? snapshot.olist.automaticEnabled ? "Ativa e automatica" : "Ativa, envio manual"
-                    : "Desativada"}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className={snapshot.olist.enabled ? "text-sm text-emerald-300" : "text-sm text-zinc-500"}>
+                    {snapshot.olist.enabled
+                      ? snapshot.olist.automaticEnabled ? "Ativa e automatica" : "Ativa, envio manual"
+                      : "Desativada"}
+                  </span>
+                  {canIntegrate ? (
+                    <Link href="/admin/olist" aria-label="Abrir Olist" className="inline-flex h-9 w-9 items-center justify-center rounded border border-white/10 text-zinc-400 transition hover:border-laser hover:text-white">
+                      <ArrowRight size={16} />
+                    </Link>
+                  ) : null}
+                </div>
               </div>
             </div>
           </section>
@@ -115,7 +122,11 @@ export default async function AdminIndex() {
             <h2 className="text-lg font-black">Atencao</h2>
             <dl className="mt-4 divide-y divide-white/10 border-y border-white/10 text-sm">
               <div className="flex items-center justify-between gap-4 py-4">
-                <dt className="text-zinc-400">Produtos bloqueados na origem</dt>
+                <dt>
+                  <Link href="/admin/importacao" className="text-zinc-400 transition hover:text-white">
+                    Produtos bloqueados na origem
+                  </Link>
+                </dt>
                 <dd className="font-black text-amber-200">{snapshot.supplier.blocked}</dd>
               </div>
               <div className="flex items-center justify-between gap-4 py-4">

@@ -39,3 +39,7 @@ a {
 .admin-content > main > header:first-child {
   display: none;
 }
+
+.manual-product-form label:has(.required-mark) {
+  position: relative;
+}

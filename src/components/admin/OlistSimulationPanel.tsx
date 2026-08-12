@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   PlayCircle,
   RefreshCw,
   Send,
@@ -15,6 +16,26 @@ import type {
   AdminOlistSettings,
   AdminOlistSimulation,
 } from "@/domain/olist/repository";
+
+function formatDateTime(value?: string) {
+  if (!value) return "Nao agendada";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+const runStatusLabels: Record<string, string> = {
+  completed: "Concluido",
+  failed: "Falhou",
+  running: "Em andamento",
+};
+
+const triggerLabels: Record<string, string> = {
+  admin: "Painel",
+  schedule: "Rotina",
+  script: "Sistema",
+};
 
 type OlistSimulationResult = {
   ok?: boolean;
@@ -61,14 +82,24 @@ export function OlistSimulationPanel({
 
   return (
     <section className="grid gap-5">
-      <div className="rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
-          Configuracao
-        </p>
-        <h2 className="mt-2 text-2xl font-black text-white">
-          Regras do conector
-        </h2>
-        <form action={saveOlistSettings} className="mt-5 grid gap-5">
+      <details className="group order-2 rounded-md border border-white/10 bg-[#0d0f10] shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5 sm:p-6">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
+              Configuracao
+            </p>
+            <h2 className="mt-2 text-xl font-black text-white sm:text-2xl">
+              Regras do conector
+            </h2>
+          </div>
+          <span className="flex items-center gap-3">
+            <span className={settings.isEnabled ? "text-sm font-bold text-emerald-300" : "text-sm font-bold text-zinc-500"}>
+              {settings.isEnabled ? "Ativo" : "Desativado"}
+            </span>
+            <ChevronDown size={18} className="text-zinc-500 transition group-open:rotate-180" />
+          </span>
+        </summary>
+        <form action={saveOlistSettings} className="grid gap-5 border-t border-white/10 p-5 sm:p-6">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <label className="grid gap-2 text-sm font-bold text-zinc-200">
               Origem fiscal
@@ -158,7 +189,7 @@ export function OlistSimulationPanel({
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">
-              Proxima rotina: {settings.nextAutoSyncAfter ?? "sem agendamento"}
+              Proxima rotina: {formatDateTime(settings.nextAutoSyncAfter)}
             </div>
             <button
               type="submit"
@@ -168,9 +199,9 @@ export function OlistSimulationPanel({
             </button>
           </div>
         </form>
-      </div>
+      </details>
 
-      <div className="rounded-md border border-white/10 bg-[#0d0f10] shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
+      <div className="order-1 rounded-md border border-white/10 bg-[#0d0f10] shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
       <div className="border-b border-white/10 p-5 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -378,7 +409,7 @@ export function OlistSimulationPanel({
       )}
       </div>
 
-      <div className="rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
+      <div className="order-3 rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
         <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
           Historico
         </p>
@@ -395,9 +426,11 @@ export function OlistSimulationPanel({
                 <div>
                   <div className="font-bold text-white">
                     {run.mode === "simulation" ? "Simulacao" : "Envio"} |{" "}
-                    {run.triggerSource === "schedule" ? "Rotina" : "Admin"}
+                    {triggerLabels[run.triggerSource] ?? run.triggerSource}
                   </div>
-                  <div className="mt-1 text-xs text-zinc-500">{run.createdAt}</div>
+                  <div className="mt-1 text-xs text-zinc-500">
+                    {formatDateTime(run.createdAt)}
+                  </div>
                 </div>
                 <div className="font-bold text-zinc-300">
                   Elegiveis: {run.eligibleProducts}
@@ -409,7 +442,7 @@ export function OlistSimulationPanel({
                   Ativos: {run.willBeActive}
                 </div>
                 <div className="font-bold text-zinc-300">
-                  Status: {run.status}
+                  Status: {runStatusLabels[run.status] ?? run.status}
                 </div>
               </div>
             ))
