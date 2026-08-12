@@ -267,7 +267,7 @@ export function CatalogPanel({
   }
 
   return (
-    <section className="rounded-md border border-white/10 bg-[#0d0f10] shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
+    <section className="min-w-0 overflow-hidden rounded-md border border-white/10 bg-[#0d0f10] shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
       <div className="border-b border-white/10 p-5 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>

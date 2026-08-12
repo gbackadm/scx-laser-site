@@ -181,7 +181,7 @@ export function AdminShell({ session, children }: AdminShellProps) {
         </div>
       ) : null}
 
-      <div className="admin-content lg:pl-64">{children}</div>
+      <div className="admin-content min-w-0 lg:pl-64">{children}</div>
     </div>
   );
 }
