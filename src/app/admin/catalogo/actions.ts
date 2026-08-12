@@ -11,6 +11,7 @@ import {
   setCatalogPublicationStatus,
   updateCatalogProductForAdmin,
   validateProductForPublication,
+  type ManualCatalogProductVariantCreate,
 } from "@/domain/catalog/adminRepository";
 import { parseMoneyToCents } from "@/domain/catalog/money";
 import { roleCan } from "@/domain/catalog/permissions";
@@ -30,6 +31,107 @@ function parseImageUrls(value: FormDataEntryValue | null) {
     .split(/\r?\n/)
     .map((url) => url.trim())
     .filter(Boolean);
+}
+
+function hasValidImageUrls(imageUrls: string[]) {
+  return (
+    imageUrls.length > 0 &&
+    imageUrls.length <= 10 &&
+    imageUrls.every((value) => {
+      try {
+        const url = new URL(value);
+        return url.protocol === "http:" || url.protocol === "https:";
+      } catch {
+        return false;
+      }
+    })
+  );
+}
+
+function parseManualVariants(
+  value: FormDataEntryValue | null,
+): ManualCatalogProductVariantCreate[] {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(String(value ?? "[]"));
+  } catch {
+    return [];
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 100) {
+    return [];
+  }
+
+  return parsed.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const item = entry as Record<string, unknown>;
+    const attributes = Array.isArray(item.attributes)
+      ? Object.fromEntries(
+          item.attributes
+            .filter(
+              (attribute): attribute is Record<string, unknown> =>
+                Boolean(attribute && typeof attribute === "object"),
+            )
+            .map((attribute) => [
+              String(attribute.name ?? "").trim(),
+              String(attribute.value ?? "").trim(),
+            ])
+            .filter(([name, attributeValue]) => Boolean(name && attributeValue))
+            .slice(0, 3),
+        )
+      : {};
+    const imageUrls = Array.isArray(item.imageUrls)
+      ? item.imageUrls.map(String).map((url) => url.trim()).filter(Boolean)
+      : parseImageUrls(String(item.imageUrls ?? ""));
+
+    return [
+      {
+        scxSku: String(item.scxSku ?? "").trim().toUpperCase(),
+        supplierSku: String(item.supplierSku ?? "").trim(),
+        name: String(item.name ?? "").trim(),
+        priceAmountInCents: parseMoneyToCents(String(item.price ?? "")),
+        costAmountInCents: parseMoneyToCents(String(item.cost ?? "")),
+        stockQuantity: parseInteger(String(item.stockQuantity ?? "0")),
+        attributes,
+        imageUrls,
+      },
+    ];
+  });
+}
+
+function manualVariantsAreValid(variants: ManualCatalogProductVariantCreate[]) {
+  const scxSkus = variants.map((variant) => variant.scxSku);
+  const supplierSkus = variants.map((variant) => variant.supplierSku);
+  const grades = variants.map((variant) =>
+    JSON.stringify(
+      Object.entries(variant.attributes).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
+  );
+
+  return (
+    variants.length > 0 &&
+    variants.every(
+      (variant) =>
+        variant.scxSku.length > 0 &&
+        variant.scxSku.length <= 30 &&
+        variant.supplierSku.length > 0 &&
+        variant.name.length > 0 &&
+        variant.priceAmountInCents > 0 &&
+        variant.costAmountInCents > 0 &&
+        variant.stockQuantity >= 0 &&
+        Object.keys(variant.attributes).length > 0 &&
+        (variant.imageUrls.length === 0 || hasValidImageUrls(variant.imageUrls)),
+    ) &&
+    new Set(scxSkus).size === scxSkus.length &&
+    new Set(supplierSkus).size === supplierSkus.length &&
+    new Set(grades).size === grades.length
+  );
 }
 
 function parseDecimalText(value: FormDataEntryValue | null) {
@@ -74,8 +176,9 @@ export async function updateCatalogProduct(formData: FormData) {
   const publicationStatus = String(
     formData.get("publicationStatus") ?? "draft",
   ) as CatalogPublicationStatus;
+  const imageUrls = parseImageUrls(formData.get("imageUrls"));
 
-  if (!productId || !title || !categoryName) {
+  if (!productId || !title || !categoryName || !hasValidImageUrls(imageUrls)) {
     redirectWithEditError(productId, "campos");
   }
 
@@ -108,7 +211,7 @@ export async function updateCatalogProduct(formData: FormData) {
     priceAmountInCents: parseMoneyToCents(formData.get("price")),
     stockQuantity,
     publicationStatus: nextPublicationStatus,
-    imageUrls: parseImageUrls(formData.get("imageUrls")),
+    imageUrls,
   });
 
   await writeAdminAuditLog({
@@ -152,9 +255,17 @@ export async function createManualCatalogProduct(formData: FormData) {
   const widthCm = parseDecimalText(formData.get("widthCm"));
   const lengthCm = parseDecimalText(formData.get("lengthCm"));
   const imageUrls = parseImageUrls(formData.get("imageUrls"));
-  const priceAmountInCents = parseMoneyToCents(formData.get("price"));
-  const costAmountInCents = parseMoneyToCents(formData.get("cost"));
-  const stockQuantity = parseInteger(formData.get("stockQuantity"));
+  const variants = parseManualVariants(formData.get("variants"));
+  const priceAmountInCents = Math.min(
+    ...variants.map((variant) => variant.priceAmountInCents),
+  );
+  const costAmountInCents = Math.min(
+    ...variants.map((variant) => variant.costAmountInCents),
+  );
+  const stockQuantity = variants.reduce(
+    (total, variant) => total + variant.stockQuantity,
+    0,
+  );
 
   if (
     !scxSku ||
@@ -166,7 +277,8 @@ export async function createManualCatalogProduct(formData: FormData) {
     !ncm ||
     priceAmountInCents <= 0 ||
     costAmountInCents <= 0 ||
-    imageUrls.length === 0 ||
+    !hasValidImageUrls(imageUrls) ||
+    !manualVariantsAreValid(variants) ||
     !hasPositiveDecimal(weightKg) ||
     !hasPositiveDecimal(heightCm) ||
     !hasPositiveDecimal(widthCm) ||
@@ -211,6 +323,7 @@ export async function createManualCatalogProduct(formData: FormData) {
       widthCm,
       lengthCm,
       imageUrls,
+      variants,
     });
   } catch (error) {
     if (error instanceof Error && error.message.includes("Ja existe produto")) {

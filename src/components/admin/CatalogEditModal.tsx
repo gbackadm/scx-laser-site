@@ -116,6 +116,11 @@ export function CatalogEditModal({
               event.preventDefault();
               setMessage(null);
 
+              if (normalizedImageUrls.length === 0) {
+                setMessage("Adicione pelo menos uma foto antes de salvar.");
+                return;
+              }
+
               const nextProduct: AdminProduct = {
                 ...product,
                 name: title.trim(),
@@ -260,10 +265,11 @@ export function CatalogEditModal({
             </label>
 
             <label className="grid gap-2 text-sm font-bold text-zinc-200">
-              Imagens
+              Imagens <span className="text-laser">*</span>
               <textarea
                 value={imageUrls}
                 onChange={(event) => setImageUrls(event.target.value)}
+                required
                 rows={4}
                 placeholder="Uma URL por linha"
                 className="rounded border border-white/12 bg-black/35 px-3 py-3 text-sm leading-6 text-white outline-none placeholder:text-zinc-600 focus:border-laser"

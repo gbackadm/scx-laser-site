@@ -6,9 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "node --test src/domain/olist/core.test.mjs",
     "lint": "next lint",
     "db:migrate": "node scripts/migrate-catalog-db.mjs",
     "db:check": "node scripts/check-catalog-db.mjs",
+    "db:check-variants": "node scripts/check-variant-sync.mjs",
+    "db:backfill-variants": "node scripts/backfill-asia-variants.mjs",
+    "olist:check-variants": "node scripts/check-olist-variant-eligibility.mjs",
     "db:copy-to-production": "node scripts/copy-catalog-db.mjs",
     "admin:create-user": "node scripts/create-admin-user.mjs"
   },

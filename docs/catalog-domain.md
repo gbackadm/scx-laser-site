@@ -103,6 +103,17 @@ Na pratica:
 | Codigo do produto no fornecedor | Codigo Asia, ex.: `CM17725B` |
 | Fornecedor do produto | Mapeamento do fornecedor no canal, ex.: Asia Import |
 
+## Produto pai e variacoes
+
+O produto pai concentra nome, descricao, categoria, dados fiscais, medidas e
+fotos gerais. Cada opcao vendavel fica em `scx_catalog_product_variants`, com
+SKU SCX filho, codigo do fornecedor, preco, custo, estoque e grade estruturada.
+
+Fotos especificas ficam em `scx_catalog_product_variant_images`. IDs externos
+dos filhos ficam em `scx_catalog_product_variant_channel_mappings`. Assim, uma
+atualizacao de estoque ou preco altera a variacao correta no Olist, Mercado Livre
+e Shopee sem criar produtos duplicados.
+
 ## Fonte Asia Import
 
 O fornecedor Asia Import e mapeado como `supplier_id='asia-import'`.

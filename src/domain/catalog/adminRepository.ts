@@ -91,7 +91,34 @@ export type ManualCatalogProductCreate = {
   widthCm: string;
   lengthCm: string;
   imageUrls: string[];
+  variants: ManualCatalogProductVariantCreate[];
 };
+
+export type ManualCatalogProductVariantCreate = {
+  scxSku: string;
+  supplierSku: string;
+  name: string;
+  priceAmountInCents: number;
+  costAmountInCents: number;
+  stockQuantity: number;
+  attributes: Record<string, string>;
+  imageUrls: string[];
+};
+
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeImageUrls(imageUrls: string[]) {
+  return Array.from(
+    new Set(imageUrls.map((url) => url.trim()).filter(isHttpUrl)),
+  ).slice(0, 10);
+}
 
 function slugify(value: string) {
   return value
@@ -315,9 +342,11 @@ export async function ensureCatalogCategory(categoryName: string) {
 export async function updateCatalogProductForAdmin(input: CatalogProductUpdate) {
   const pool = getDatabasePool();
   const categoryId = await ensureCatalogCategory(input.categoryName);
-  const imageUrls = Array.from(
-    new Set(input.imageUrls.map((url) => url.trim()).filter(Boolean)),
-  );
+  const imageUrls = normalizeImageUrls(input.imageUrls);
+
+  if (imageUrls.length === 0) {
+    throw new Error("O produto precisa ter pelo menos uma foto valida.");
+  }
 
   await pool.query("BEGIN");
 
@@ -388,9 +417,55 @@ export async function createManualCatalogProductForAdmin(
   const supplierProductId = `${supplierId}-${identifier(supplierCode)}`;
   const catalogProductId = `catalog-${identifier(scxSku)}`;
   const categoryId = await ensureCatalogCategory(input.categoryName);
-  const imageUrls = Array.from(
-    new Set(input.imageUrls.map((url) => url.trim()).filter(Boolean)),
+  const imageUrls = normalizeImageUrls(input.imageUrls);
+  const variants = input.variants.map((variant) => ({
+    ...variant,
+    scxSku: variant.scxSku.trim().toUpperCase(),
+    supplierSku: variant.supplierSku.trim(),
+    name: variant.name.trim(),
+    attributes: Object.fromEntries(
+      Object.entries(variant.attributes)
+        .map(([name, value]) => [name.trim(), value.trim()])
+        .filter(([name, value]) => Boolean(name && value)),
+    ),
+    imageUrls: normalizeImageUrls(variant.imageUrls),
+  }));
+
+  if (imageUrls.length === 0) {
+    throw new Error("O produto precisa ter pelo menos uma foto valida.");
+  }
+
+  if (variants.length === 0) {
+    throw new Error("O produto precisa ter pelo menos uma variacao.");
+  }
+
+  const variantScxSkus = variants.map((variant) => variant.scxSku);
+  const variantSupplierSkus = variants.map((variant) => variant.supplierSku);
+  const variantGrades = variants.map((variant) =>
+    JSON.stringify(
+      Object.entries(variant.attributes).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
   );
+
+  if (
+    variants.some(
+      (variant) =>
+        !variant.scxSku ||
+        !variant.supplierSku ||
+        !variant.name ||
+        variant.priceAmountInCents <= 0 ||
+        variant.costAmountInCents <= 0 ||
+        variant.stockQuantity < 0 ||
+        Object.keys(variant.attributes).length === 0,
+    ) ||
+    new Set(variantScxSkus).size !== variantScxSkus.length ||
+    new Set(variantSupplierSkus).size !== variantSupplierSkus.length ||
+    new Set(variantGrades).size !== variantGrades.length
+  ) {
+    throw new Error("As variacoes possuem campos repetidos ou invalidos.");
+  }
   const dimensionLabel = `${input.heightCm} x ${input.widthCm} x ${input.lengthCm} cm`;
   const rawPayload = {
     referencia: supplierCode,
@@ -415,6 +490,19 @@ export async function createManualCatalogProductForAdmin(
       { slug: "peso-do-produto", value: input.weightKg },
       { slug: "dimensao-do-produto", value: dimensionLabel },
     ],
+    variacoes: variants.map((variant) => ({
+      referencia: variant.supplierSku,
+      nome: variant.name,
+      preco: (variant.costAmountInCents / 100).toFixed(2),
+      qtd_estoque: variant.stockQuantity,
+      atributos: Object.fromEntries(
+        Object.entries(variant.attributes).map(([name, value]) => [
+          slugify(name),
+          { name, value },
+        ]),
+      ),
+      imagem: variant.imageUrls[0],
+    })),
   };
 
   const existingResult = await pool.query<{ id: string }>(
@@ -431,6 +519,20 @@ export async function createManualCatalogProductForAdmin(
 
   if (existingResult.rows[0]) {
     throw new Error("Ja existe produto com este SKU SCX ou codigo de fornecedor.");
+  }
+
+  const existingVariantResult = await pool.query<{ scx_sku: string }>(
+    `
+      SELECT scx_sku
+      FROM scx_catalog_product_variants
+      WHERE upper(scx_sku) = ANY($1::text[])
+      LIMIT 1
+    `,
+    [variantScxSkus],
+  );
+
+  if (existingVariantResult.rows[0]) {
+    throw new Error("Ja existe produto com um dos SKUs SCX das variacoes.");
   }
 
   await pool.query("BEGIN");
@@ -554,6 +656,57 @@ export async function createManualCatalogProductForAdmin(
       );
     }
 
+    for (const [index, variant] of variants.entries()) {
+      const variantId = randomUUID();
+
+      await pool.query(
+        `
+          INSERT INTO scx_catalog_product_variants (
+            id,
+            product_id,
+            scx_sku,
+            supplier_sku,
+            name,
+            price_amount_in_cents,
+            cost_amount_in_cents,
+            stock_quantity,
+            attributes,
+            source,
+            sort_order
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'manual', $10)
+        `,
+        [
+          variantId,
+          catalogProductId,
+          variant.scxSku,
+          variant.supplierSku,
+          variant.name,
+          variant.priceAmountInCents,
+          variant.costAmountInCents,
+          variant.stockQuantity,
+          JSON.stringify(variant.attributes),
+          index,
+        ],
+      );
+
+      for (const [imageIndex, url] of variant.imageUrls.entries()) {
+        await pool.query(
+          `
+            INSERT INTO scx_catalog_product_variant_images (
+              id,
+              variant_id,
+              url,
+              alt_text,
+              sort_order
+            )
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [randomUUID(), variantId, url, variant.name, imageIndex],
+        );
+      }
+    }
+
     await pool.query("COMMIT");
   } catch (error) {
     await pool.query("ROLLBACK");
@@ -600,8 +753,12 @@ export function validateProductForPublication(
     return "Informe o titulo antes de publicar.";
   }
 
-  if (product.price.amountInCents < 0) {
+  if (product.price.amountInCents <= 0) {
     return "Informe um preco valido antes de publicar.";
+  }
+
+  if (!product.images.some((image) => image.url.trim())) {
+    return "Adicione pelo menos uma foto valida antes de publicar.";
   }
 
   if (!product.categoryId) {

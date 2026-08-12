@@ -15,6 +15,21 @@ export type OlistProductComponent = {
   sort_order?: number;
 };
 
+export type OlistProductVariant = {
+  id: string;
+  scx_sku: string;
+  supplier_sku: string;
+  name: string;
+  price_amount_in_cents: number;
+  cost_amount_in_cents: number;
+  stock_quantity: number;
+  attributes: Record<string, string>;
+  is_active: boolean;
+  sort_order?: number;
+  olist_variant_id?: string | null;
+  images?: OlistProductImage[];
+};
+
 export type OlistSyncProduct = {
   id: string;
   sku: string;
@@ -35,6 +50,7 @@ export type OlistSyncProduct = {
   images: OlistProductImage[];
   components?: OlistProductComponent[];
   production_steps?: string[];
+  variants?: OlistProductVariant[];
 };
 
 export type OlistBlockedProduct = {
@@ -80,6 +96,11 @@ export function buildTinyProduct(
   scxSku: string;
   supplierSku: string;
   productId: string;
+  variants: Array<{
+    variantId: string;
+    scxSku: string;
+    supplierSku: string;
+  }>;
 };
 export function summarizeOlistPlan(
   products: OlistSyncProduct[],

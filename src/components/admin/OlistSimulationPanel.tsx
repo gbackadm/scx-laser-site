@@ -1,6 +1,12 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, PlayCircle, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  PlayCircle,
+  RefreshCw,
+  Send,
+} from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { saveOlistSettings } from "@/app/admin/olist/actions";
@@ -135,7 +141,7 @@ export function OlistSimulationPanel({
                 defaultChecked={settings.requireManualSimulationBeforeSend}
                 className="h-4 w-4 accent-red-600"
               />
-              Exigir simulacao manual
+              Exigir simulacao antes do envio manual
             </label>
             <label className="grid gap-2 text-sm font-bold text-zinc-200">
               Acao automatica
@@ -145,7 +151,7 @@ export function OlistSimulationPanel({
                 className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser"
               >
                 <option value="simulation">Simular e registrar</option>
-                <option value="send">Enviar quando liberado</option>
+                <option value="send">Enviar automaticamente</option>
               </select>
             </label>
           </div>
@@ -175,8 +181,8 @@ export function OlistSimulationPanel({
               Envio de produtos
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-300">
-              Primeiro simulamos tudo que vai acontecer. O envio real fica
-              bloqueado ate a simulacao bater com as regras do catalogo.
+              A simulacao mostra o lote e os bloqueios. O envio manual e a
+              rotina automatica usam exatamente as mesmas validacoes.
             </p>
           </div>
 
@@ -304,6 +310,7 @@ export function OlistSimulationPanel({
                     <div className="font-bold text-white">{product.title}</div>
                     <div className="mt-1 text-xs text-zinc-500">
                       {product.scxSku} | Estoque {product.stockQuantity} |{" "}
+                      {product.variationCount} variacao(oes) |{" "}
                       {product.olistProductId ? "Atualizar" : "Criar"}
                     </div>
                   </div>
@@ -337,11 +344,31 @@ export function OlistSimulationPanel({
 
           <button
             type="button"
-            disabled
-            className="inline-flex min-h-11 items-center justify-center rounded border border-white/12 bg-white/[0.03] px-4 text-sm font-black text-zinc-500 sm:w-fit"
-            title="Proxima etapa: envio controlado depois da simulacao validada"
+            disabled={isPending || simulation.eligibleProducts === 0}
+            onClick={() => {
+              setMessage(null);
+              startTransition(async () => {
+                try {
+                  const response = await fetch("/admin/api/olist/enviar", {
+                    method: "POST",
+                  });
+                  const result = (await response.json().catch(() => null)) as
+                    | OlistSimulationResult
+                    | null;
+
+                  setMessage(
+                    result?.message ??
+                      `Nao foi possivel enviar. Codigo ${response.status}.`,
+                  );
+                } catch {
+                  setMessage("Nao foi possivel enviar os produtos agora.");
+                }
+              });
+            }}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-red-300/45 bg-[linear-gradient(180deg,#ed1b23_0%,#b80f16_100%)] px-4 text-sm font-black text-white transition disabled:border-white/12 disabled:bg-white/[0.03] disabled:text-zinc-500 sm:w-fit"
           >
-            Enviar elegiveis
+            {isPending ? <RefreshCw size={17} className="animate-spin" /> : <Send size={17} />}
+            {isPending ? "Processando..." : "Enviar elegiveis"}
           </button>
         </div>
       ) : (

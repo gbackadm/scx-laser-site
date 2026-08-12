@@ -16,6 +16,11 @@ Todo produto enviado ao Olist deve nascer de:
 - `scx_catalog_product_images`: imagens do produto.
 - `scx_catalog_supplier_channel_mappings`: fornecedor cadastrado no canal.
 - `scx_catalog_product_channel_mappings`: ID externo do produto no Olist.
+- `scx_catalog_product_variants`: SKU, grade, preco, custo e estoque de cada
+  opcao vendavel.
+- `scx_catalog_product_variant_images`: imagens especificas de cada variacao.
+- `scx_catalog_product_variant_channel_mappings`: ID externo de cada variacao
+  no Olist.
 - `scx_catalog_product_components`: componentes reais de kit/estrutura, quando
   houver.
 - `scx_catalog_product_production_steps`: etapas especificas do produto, quando
@@ -28,6 +33,8 @@ Todo produto enviado ao Olist deve nascer de:
 | SKU no Olist/Tiny | Sempre SKU SCX (`scx_sku`). |
 | Codigo do fornecedor | Codigo do fornecedor (`SupplierProduct.externalId`). |
 | ID do Olist | Salvo em `scx_catalog_product_channel_mappings.external_id`. |
+| SKU da variacao | SKU SCX filho, unico e com no maximo 30 caracteres. |
+| ID da variacao no Olist | Salvo por SKU filho para atualizacoes sem duplicidade. |
 
 Exemplo:
 
@@ -58,6 +65,8 @@ O produto so pode ser enviado se tiver:
 - Medidas normalizadas.
 - Pelo menos uma imagem.
 - Fornecedor mapeado no Olist.
+- Quando houver variacoes: pelo menos uma ativa, SKU SCX filho, codigo do
+  fornecedor, preco, custo e grade sem duplicidade.
 
 Se faltar algum dado, o produto fica bloqueado e o motivo aparece no relatorio
 do lote. Produto bloqueado nao deve ser enviado manualmente para contornar regra.
@@ -82,7 +91,7 @@ Dados gerais do Tiny/Olist recebem os campos operacionais:
 - Situacao: `A` somente quando `published` e estoque maior ou igual ao minimo de
   publicacao; `I` quando `hidden`, `out_of_stock` ou estoque abaixo do minimo.
 - Tipo `P`.
-- Classe do produto `S` para produto simples.
+- Classe do produto `S` para simples e `V` quando houver variacoes.
 - Categoria em arvore com `>>`.
 - Descricao complementar limpa.
 - Estoque atual.
@@ -125,6 +134,30 @@ categoria, mas nao devem ser enviados como tags nem como descricao.
 
 Enquanto a API correta para essa aba nao estiver implementada, os atributos ficam
 estruturados no banco em `scx_catalog_product_attributes`.
+
+## Variacoes
+
+Variacao nao e tag e nao e ficha tecnica. Ela representa uma opcao compravel do
+mesmo produto pai, como uma combinacao de cor, tamanho, capacidade ou modelo.
+
+Cada variacao guarda:
+
+- SKU SCX filho e codigo correspondente no fornecedor;
+- nome da opcao;
+- preco, custo e estoque proprios;
+- grade flexivel com ate tres pares, como `Cor=Azul` e `Tamanho=G`;
+- imagens proprias opcionais, herdando as fotos do produto quando vazias;
+- ID retornado pelo Olist para atualizacoes futuras.
+
+No envio, o pai recebe `classe_produto = V` e cada filho entra em `variacoes`
+com `codigo`, `preco`, `estoque_atual` e `grade`. Variacao desativada que ja
+existe no Olist continua no payload com estoque zero para nao permanecer
+vendavel no canal.
+
+O cadastro manual exige pelo menos uma variacao. Fotos gerais do produto sao
+obrigatorias e validadas novamente no servidor. A Asia Import e normalizada para
+as mesmas tabelas, portanto o fluxo do Olist nao depende do formato original do
+fornecedor.
 
 ## Kit, estrutura e etapas
 
@@ -175,9 +208,9 @@ O envio respeita:
 - produtos sem ID Olist salvo sao criados;
 - retornos OK gravam/atualizam o mapeamento no banco.
 
-## Tela futura no site
+## Tela no site
 
-A tela do site deve ter:
+A tela do admin possui:
 
 - botao `Simular envio Olist`;
 - botao `Enviar elegiveis`;
@@ -188,4 +221,7 @@ A tela do site deve ter:
 - log do payload enviado e resposta recebida;
 - acao para reprocessar somente falhas.
 
-O site nao deve enviar produto direto sem passar pela simulacao e pela validacao.
+O envio manual e a rotina automatica passam pelo mesmo validador. A rotina roda
+a cada hora, envia no maximo cinco lotes de vinte registros por execucao e
+prioriza produtos nunca sincronizados ou com sincronizacao mais antiga. Todo
+resultado fica registrado em `scx_olist_sync_runs`.

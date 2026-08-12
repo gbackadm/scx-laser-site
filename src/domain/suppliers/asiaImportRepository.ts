@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { getDatabasePool } from "@/domain/catalog/db";
 
@@ -77,8 +77,15 @@ function mainVariation(product: AsiaImportProduct) {
 }
 
 function productStock(product: AsiaImportProduct) {
-  const variation = mainVariation(product);
-  return parseAsiaStock(variation?.qtd_estoque);
+  const variationStocks = (product.variacoes ?? [])
+    .map((variation) => parseAsiaStock(variation.qtd_estoque))
+    .filter((value): value is number => value !== undefined);
+
+  if (variationStocks.length > 0) {
+    return variationStocks.reduce((total, value) => total + Math.max(0, value), 0);
+  }
+
+  return parseAsiaStock(mainVariation(product)?.qtd_estoque);
 }
 
 function productPrice(product: AsiaImportProduct) {
@@ -93,7 +100,207 @@ function productImages(product: AsiaImportProduct) {
   return [
     product.imagem,
     ...(Array.isArray(product.galeria) ? product.galeria : []),
+    ...(product.variacoes ?? []).map((variation) => variation.imagem),
   ].filter((value): value is string => Boolean(value));
+}
+
+function variationAttributes(value: unknown, fallback: string) {
+  const attributes: Record<string, string> = {};
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+
+      const item = entry as Record<string, unknown>;
+      const name = String(item.name ?? item.nome ?? item.slug ?? "").trim();
+      const attributeValue = String(item.value ?? item.valor ?? "").trim();
+
+      if (name && attributeValue) {
+        attributes[name] = attributeValue;
+      }
+    }
+  } else if (value && typeof value === "object") {
+    for (const [key, rawValue] of Object.entries(value)) {
+      if (rawValue && typeof rawValue === "object") {
+        const item = rawValue as Record<string, unknown>;
+        const name = String(item.name ?? item.nome ?? key).trim();
+        const attributeValue = String(
+          item.value ?? item.valor ?? item.label ?? "",
+        ).trim();
+
+        if (name && attributeValue) {
+          attributes[name] = attributeValue;
+        }
+      } else if (rawValue !== undefined && rawValue !== null) {
+        attributes[key] = String(rawValue).trim();
+      }
+    }
+  }
+
+  return Object.keys(attributes).length > 0
+    ? attributes
+    : { Modelo: fallback || "Padrao" };
+}
+
+function generatedVariationScxSku(parentScxSku: string, supplierSku: string) {
+  const code = createHash("sha1").update(supplierSku).digest("hex").slice(0, 5);
+  const suffix = `-${code.toUpperCase()}`;
+  return `${parentScxSku.slice(0, 30 - suffix.length)}${suffix}`;
+}
+
+async function syncAsiaVariationsForCatalogProduct(
+  pool: ReturnType<typeof getDatabasePool>,
+  catalogProductId: string,
+  product: AsiaImportProduct,
+) {
+  const variations = product.variacoes ?? [];
+
+  if (variations.length === 0) {
+    return;
+  }
+
+  const parentResult = await pool.query<{ scx_sku: string | null }>(
+    `SELECT scx_sku FROM scx_catalog_products WHERE id = $1 LIMIT 1`,
+    [catalogProductId],
+  );
+  const parentScxSku = parentResult.rows[0]?.scx_sku;
+
+  if (!parentScxSku) {
+    return;
+  }
+
+  await pool.query(
+    `
+      UPDATE scx_catalog_product_variants
+      SET is_active = false,
+        stock_quantity = 0,
+        updated_at = now()
+      WHERE product_id = $1
+        AND source = 'supplier'
+    `,
+    [catalogProductId],
+  );
+
+  for (const [index, variation] of variations.entries()) {
+    const supplierSku =
+      variation.referencia?.trim() ||
+      `${productExternalId(product)}-${String(index + 1).padStart(2, "0")}`;
+    const name = variation.nome?.trim() || supplierSku;
+    const costAmountInCents =
+      parseAsiaMoneyToCents(variation.preco) ?? productPrice(product) ?? 0;
+
+    if (costAmountInCents <= 0) {
+      continue;
+    }
+
+    const existingResult = await pool.query<{ id: string; scx_sku: string }>(
+      `
+        SELECT id, scx_sku
+        FROM scx_catalog_product_variants
+        WHERE product_id = $1
+          AND supplier_sku = $2
+        LIMIT 1
+      `,
+      [catalogProductId, supplierSku],
+    );
+    const variantId = existingResult.rows[0]?.id ?? randomUUID();
+    const scxSku =
+      existingResult.rows[0]?.scx_sku ??
+      generatedVariationScxSku(parentScxSku, supplierSku);
+    const attributes = variationAttributes(variation.atributos, name);
+    const stockQuantity = Math.max(0, parseAsiaStock(variation.qtd_estoque) ?? 0);
+    const priceAmountInCents = Math.round(costAmountInCents * 2.2);
+
+    await pool.query(
+      `
+        INSERT INTO scx_catalog_product_variants (
+          id,
+          product_id,
+          scx_sku,
+          supplier_sku,
+          name,
+          price_amount_in_cents,
+          cost_amount_in_cents,
+          stock_quantity,
+          attributes,
+          source,
+          is_active,
+          sort_order,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'supplier', true, $10, now())
+        ON CONFLICT (product_id, supplier_sku)
+        DO UPDATE SET
+          name = EXCLUDED.name,
+          price_amount_in_cents = EXCLUDED.price_amount_in_cents,
+          cost_amount_in_cents = EXCLUDED.cost_amount_in_cents,
+          stock_quantity = EXCLUDED.stock_quantity,
+          attributes = EXCLUDED.attributes,
+          source = 'supplier',
+          is_active = true,
+          sort_order = EXCLUDED.sort_order,
+          updated_at = now()
+      `,
+      [
+        variantId,
+        catalogProductId,
+        scxSku,
+        supplierSku,
+        name,
+        priceAmountInCents,
+        costAmountInCents,
+        stockQuantity,
+        JSON.stringify(attributes),
+        index,
+      ],
+    );
+
+    await pool.query(
+      `DELETE FROM scx_catalog_product_variant_images WHERE variant_id = $1`,
+      [variantId],
+    );
+
+    const variationImage = variation.imagem?.trim();
+    if (variationImage) {
+      await pool.query(
+        `
+          INSERT INTO scx_catalog_product_variant_images (
+            id,
+            variant_id,
+            url,
+            alt_text,
+            sort_order
+          )
+          VALUES ($1, $2, $3, $4, 0)
+        `,
+        [randomUUID(), variantId, variationImage, name],
+      );
+    }
+  }
+
+  await pool.query(
+    `
+      UPDATE scx_catalog_products product
+      SET stock_quantity = totals.stock_quantity,
+        price_amount_in_cents = COALESCE(totals.price_amount_in_cents, product.price_amount_in_cents),
+        cost_amount_in_cents = COALESCE(totals.cost_amount_in_cents, product.cost_amount_in_cents),
+        updated_at = now()
+      FROM (
+        SELECT
+          product_id,
+          COALESCE(sum(stock_quantity) FILTER (WHERE is_active), 0)::int AS stock_quantity,
+          min(price_amount_in_cents) FILTER (WHERE is_active) AS price_amount_in_cents,
+          min(cost_amount_in_cents) FILTER (WHERE is_active) AS cost_amount_in_cents
+        FROM scx_catalog_product_variants
+        WHERE product_id = $1
+        GROUP BY product_id
+      ) totals
+      WHERE product.id = totals.product_id
+    `,
+    [catalogProductId],
+  );
 }
 
 function decodeHtmlEntities(value: string) {
@@ -250,6 +457,10 @@ export async function upsertAsiaSupplierProducts(products: AsiaImportProduct[]) 
         UPDATE scx_catalog_products
         SET stock_quantity = $2,
           cost_amount_in_cents = COALESCE($3, cost_amount_in_cents),
+          price_amount_in_cents = CASE
+            WHEN $3::integer IS NOT NULL THEN round($3::numeric * 2.2)::integer
+            ELSE price_amount_in_cents
+          END,
           publication_status = CASE
             WHEN publication_status = 'out_of_stock'
               AND $2 >= (
@@ -278,6 +489,25 @@ export async function upsertAsiaSupplierProducts(products: AsiaImportProduct[]) 
       `,
       [supplierProductId, stockAvailable, suggestedPriceAmountInCents],
     );
+
+    const catalogProductResult = await pool.query<{ id: string }>(
+      `
+        SELECT id
+        FROM scx_catalog_products
+        WHERE supplier_product_id = $1
+           OR sku = $2
+        LIMIT 1
+      `,
+      [supplierProductId, externalId],
+    );
+
+    if (catalogProductResult.rows[0]) {
+      await syncAsiaVariationsForCatalogProduct(
+        pool,
+        catalogProductResult.rows[0].id,
+        product,
+      );
+    }
 
     await pool.query(
       `
@@ -456,7 +686,7 @@ export async function createCatalogDraftFromSupplierProduct(
           stock_quantity,
           tags
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $8, 'tracked', $9, '{}')
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9, 'tracked', $10, '{}')
         ON CONFLICT (sku) DO UPDATE SET
           scx_sku = COALESCE(scx_catalog_products.scx_sku, EXCLUDED.scx_sku),
           title = EXCLUDED.title,
@@ -498,9 +728,16 @@ export async function createCatalogDraftFromSupplierProduct(
         supplierProduct.raw_description,
         categoryId,
         supplierProduct.id,
+        Math.round((supplierProduct.suggested_price_amount_in_cents ?? 0) * 2.2),
         supplierProduct.suggested_price_amount_in_cents ?? 0,
         supplierProduct.stock_available ?? 0,
       ],
+    );
+
+    await syncAsiaVariationsForCatalogProduct(
+      pool,
+      catalogProductId,
+      supplierProduct.raw_payload as AsiaImportProduct,
     );
 
     await pool.query(

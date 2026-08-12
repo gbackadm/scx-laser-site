@@ -191,6 +191,42 @@ export function productShouldBeActive(product, stockMinQuantity) {
   );
 }
 
+function normalizedVariantGrade(attributes) {
+  return Object.fromEntries(
+    Object.entries(attributes ?? {})
+      .map(([name, value]) => [String(name).trim(), String(value).trim()])
+      .filter(([name, value]) => Boolean(name && value)),
+  );
+}
+
+function buildTinyVariations(product, isUpdate) {
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+
+  return variants
+    .filter((variant) => variant.is_active || variant.olist_variant_id)
+    .map((variant) => {
+      const tinyVariation = {
+        codigo: truncate(variant.scx_sku, 30),
+        preco: toMoney(variant.price_amount_in_cents),
+        estoque_atual: variant.is_active ? variant.stock_quantity : 0,
+        grade: normalizedVariantGrade(variant.attributes),
+      };
+
+      if (isUpdate && variant.olist_variant_id) {
+        tinyVariation.id = variant.olist_variant_id;
+      }
+
+      return {
+        variacao: tinyVariation,
+        mapping: {
+          variantId: variant.id,
+          scxSku: variant.scx_sku,
+          supplierSku: variant.supplier_sku,
+        },
+      };
+    });
+}
+
 export function validateOlistProduct(product) {
   const rawPayload = product.raw_payload ?? {};
   const productMeasure = parseProductDimensions(rawPayload);
@@ -229,12 +265,51 @@ export function validateOlistProduct(product) {
     reasons.push("sem fornecedor Olist mapeado");
   }
 
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+  if (variants.length > 0) {
+    const activeVariants = variants.filter((variant) => variant.is_active);
+    const variantSkus = activeVariants.map((variant) => variant.scx_sku);
+    const supplierSkus = activeVariants.map((variant) => variant.supplier_sku);
+    const grades = activeVariants.map((variant) =>
+      JSON.stringify(
+        Object.entries(normalizedVariantGrade(variant.attributes)).sort(
+          ([left], [right]) => left.localeCompare(right),
+        ),
+      ),
+    );
+
+    if (activeVariants.length === 0) {
+      reasons.push("sem variacao ativa");
+    }
+    if (
+      activeVariants.some(
+        (variant) =>
+          !variant.scx_sku ||
+          !variant.supplier_sku ||
+          !variant.name ||
+          variant.price_amount_in_cents <= 0 ||
+          variant.cost_amount_in_cents <= 0 ||
+          Object.keys(normalizedVariantGrade(variant.attributes)).length === 0,
+      )
+    ) {
+      reasons.push("variacao incompleta");
+    }
+    if (new Set(variantSkus).size !== variantSkus.length) {
+      reasons.push("SKU de variacao repetido");
+    }
+    if (new Set(supplierSkus).size !== supplierSkus.length) {
+      reasons.push("codigo de fornecedor da variacao repetido");
+    }
+    if (new Set(grades).size !== grades.length) {
+      reasons.push("grade de variacao repetida");
+    }
+  }
+
   return reasons;
 }
 
 export function buildTinyProduct(product, origin, sequence, isUpdate, stockMinQuantity) {
   const costInCents = product.cost_amount_in_cents ?? product.price_amount_in_cents;
-  const calculatedPriceInCents = Math.round(costInCents * 2.2);
   const rawPayload = product.raw_payload ?? {};
   const scxSku = product.scx_sku ?? product.sku;
   const supplierSku = product.external_id ?? rawPayload.referencia ?? product.sku;
@@ -257,11 +332,12 @@ export function buildTinyProduct(product, origin, sequence, isUpdate, stockMinQu
   const externalImageUrls = allImageUrls.slice(0, 10);
   const description = product.description ?? product.title;
   const structureItems = buildStructureItems(product);
+  const tinyVariations = buildTinyVariations(product, isUpdate);
   const notes = [
     `Fornecedor: ${product.supplier_name ?? "Nao informado"}`,
     `SKU SCX: ${scxSku}`,
     `Codigo fornecedor: ${supplierSku}`,
-    "Regra de preco SCX: custo consolidado x 2,2",
+    "Preco final calculado e validado no catalogo SCX",
     "Prazo SCX: 3 dias uteis para Asia Import",
     firstProperty(properties, [
       "dimensao-da-caixa",
@@ -300,13 +376,13 @@ export function buildTinyProduct(product, origin, sequence, isUpdate, stockMinQu
     codigo: truncate(scxSku, 30),
     nome: buildProductName(product, scxSku),
     unidade: "UN",
-    preco: toMoney(calculatedPriceInCents),
+    preco: toMoney(product.price_amount_in_cents),
     preco_custo: toMoney(costInCents),
     ncm,
     origem: String(origin),
     situacao: productShouldBeActive(product, stockMinQuantity) ? "A" : "I",
     tipo: "P",
-    classe_produto: "S",
+    classe_produto: tinyVariations.length > 0 ? "V" : "S",
     categoria: buildCategoryTree(product, rawPayload),
     descricao_complementar: description,
     obs: notes,
@@ -327,6 +403,10 @@ export function buildTinyProduct(product, origin, sequence, isUpdate, stockMinQu
     imagens_externas: externalImageUrls.map((url) => ({
       imagem_externa: { url },
     })),
+    variacoes:
+      tinyVariations.length > 0
+        ? tinyVariations.map(({ variacao }) => ({ variacao }))
+        : undefined,
     seo: {
       seo_title: truncate(product.title, 120),
       seo_keywords: truncate(buildSeoKeywords(product, rawPayload), 255),
@@ -344,6 +424,7 @@ export function buildTinyProduct(product, origin, sequence, isUpdate, stockMinQu
     scxSku,
     supplierSku,
     productId: product.id,
+    variants: tinyVariations.map(({ mapping }) => mapping),
   };
 }
 

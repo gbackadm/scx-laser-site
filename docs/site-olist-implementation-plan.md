@@ -187,7 +187,9 @@ Resultado esperado:
 5. [feito] Criar tabela de execucao Olist.
 6. [feito] Criar rota de simulacao.
 7. [feito] Criar tela minima de simulacao.
-8. [pendente] So depois criar rota de envio pela tela.
+8. [feito] Criar rota de envio pela tela e envio automatico agendado.
+9. [feito] Criar cadastro manual com fotos e variacoes obrigatorias.
+10. [feito] Normalizar variacoes da Asia e salvar IDs filhos do Olist.
 
 ## Implementacao iniciada no site
 
@@ -212,19 +214,23 @@ Estado atual:
 - A tela ja simula e salva historico.
 - O painel permite alterar origem fiscal, tamanho de lote, limite de chamadas,
   rotina automatica e intervalo.
-- O botao de envio real existe apenas desabilitado.
+- O botao de envio real envia somente os produtos elegiveis.
 - A rota de simulacao usa a permissao `supplier:import`.
 - A simulacao nao chama a API do Olist/Tiny.
 - O script `scripts/olist-bulk-products.mjs` ja usa o modulo comum.
 - A rotina Netlify roda a cada hora e consulta o banco para decidir se executa.
-- Por seguranca, a rotina automatica atual registra simulacao; envio automatico
-  fica bloqueado ate a rota de envio controlado ser criada.
+- A rotina automatica esta em modo de envio e usa as mesmas validacoes da
+  simulacao.
 - Build do site passou.
 - Migration `018_olist_sync_settings_and_runs.sql` aplicada no Supabase.
-- Simulacao final: 79 avaliados, 79 elegiveis, 0 bloqueados, 59 ativos,
-  20 inativos, 0 criacoes, 79 atualizacoes, 4 chamadas estimadas.
-- Proximo passo antes do envio: criar rota de envio controlado reaproveitando
-  uma simulacao salva.
+- Simulacao com variacoes: 79 avaliados, 79 elegiveis, 0 bloqueados, 58 ativos,
+  21 inativos, 0 criacoes, 79 atualizacoes, 189 variacoes e 4 chamadas
+  estimadas.
+- As variacoes da Asia sao normalizadas em `scx_catalog_product_variants`.
+- O cadastro manual exige fotos gerais e pelo menos uma variacao completa.
+- O ID do produto pai e os IDs dos filhos retornados pelo Olist ficam salvos.
+- Backfill inicial: 79 produtos, 189 variacoes, 0 registros incompletos e 0
+  grades duplicadas.
 
 ## Rotina automatica Asia Import
 
@@ -256,7 +262,7 @@ Estado atual da Asia Import:
 ## Criterios de seguranca
 
 - Nunca sobrescrever mudancas locais sem revisao.
-- Nunca enviar produto sem simulacao.
+- Nunca enviar produto sem passar pelo validador comum de simulacao/envio.
 - Nunca ativar produto com estoque abaixo de 1000.
 - Nunca usar codigo Asia como SKU do canal.
 - Nunca usar tag como ficha tecnica.

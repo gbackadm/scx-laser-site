@@ -64,6 +64,29 @@ export async function POST(request: Request) {
       );
     }
 
+    if (imageUrls.length === 0 || imageUrls.length > 10) {
+      return NextResponse.json(
+        { ok: false, message: "Adicione de 1 a 10 fotos validas antes de salvar." },
+        { status: 400 },
+      );
+    }
+
+    const hasInvalidImageUrl = imageUrls.some((value: string) => {
+      try {
+        const url = new URL(value);
+        return url.protocol !== "http:" && url.protocol !== "https:";
+      } catch {
+        return true;
+      }
+    });
+
+    if (hasInvalidImageUrl) {
+      return NextResponse.json(
+        { ok: false, message: "Use apenas enderecos completos de fotos." },
+        { status: 400 },
+      );
+    }
+
     if (!isCatalogPublicationStatus(publicationStatus)) {
       return NextResponse.json(
         { ok: false, message: "Use um status valido." },
