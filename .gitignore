@@ -5,3 +5,6 @@ dist/
 .env
 .env.local
 tsconfig.tsbuildinfo
+
+# Local Netlify folder
+.netlify
