@@ -236,3 +236,8 @@ prioriza produtos nunca sincronizados ou com sincronizacao mais antiga.
 Migracoes podem usar duas chamadas dentro desse lote. Essa divisao evita o
 limite de tempo da funcao Netlify. Todo resultado fica registrado em
 `scx_olist_sync_runs`.
+
+Se o Tiny confirmar a criacao, mas a funcao for interrompida antes de salvar os
+IDs, a tentativa seguinte detecta o erro de SKU duplicado, pesquisa o pai pelo
+SKU SCX, obtem os filhos e recompõe ate cinco mapeamentos por execucao. Nenhum
+produto e recriado durante essa recuperacao.

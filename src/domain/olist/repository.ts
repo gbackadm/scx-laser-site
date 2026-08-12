@@ -219,6 +219,8 @@ export async function listProductsForOlistSync(limit?: number) {
         sp.raw_payload,
         scm.external_id AS olist_supplier_id,
         pcm.external_id AS olist_product_id,
+        pcm.sync_status AS olist_sync_status,
+        pcm.raw_response AS olist_raw_response,
         coalesce(images.items, '[]'::json) AS images,
         coalesce(variants.items, '[]'::json) AS variants,
         coalesce(components.items, '[]'::json) AS components,
@@ -322,6 +324,8 @@ export async function getProductForOlistSync(productId: string) {
         sp.raw_payload,
         scm.external_id AS olist_supplier_id,
         pcm.external_id AS olist_product_id,
+        pcm.sync_status AS olist_sync_status,
+        pcm.raw_response AS olist_raw_response,
         coalesce(images.items, '[]'::json) AS images,
         coalesce(variants.items, '[]'::json) AS variants,
         coalesce(components.items, '[]'::json) AS components,
@@ -672,6 +676,106 @@ function tinyRecordError(record: TinyApiRecord, generalErrors: unknown[]) {
     "Olist/Tiny nao confirmou o produto.";
 }
 
+function hasDuplicateSkuFailure(product: OlistSyncProduct) {
+  return (
+    product.olist_sync_status === "failed" &&
+    JSON.stringify(product.olist_raw_response ?? {}).includes(
+      "Registro em duplicidade - código (SKU)",
+    )
+  );
+}
+
+async function recoverDuplicateSkuMappings({
+  products,
+  settings,
+  stockMinQuantity,
+  limit = 5,
+}: {
+  products: OlistSyncProduct[];
+  settings: AdminOlistSettings;
+  stockMinQuantity: number;
+  limit?: number;
+}) {
+  const token = process.env.OLIST_API_TOKEN ?? process.env.TINY_API_TOKEN;
+  if (!token) {
+    throw new Error("Token Olist/Tiny nao configurado.");
+  }
+
+  const candidates = products.filter(hasDuplicateSkuFailure).slice(0, limit);
+  const recovered: string[] = [];
+  const errors: string[] = [];
+
+  for (const product of candidates) {
+    const scxSku = product.scx_sku ?? product.sku;
+    const searchResult = await postTinyApi("produtos.pesquisa.php", {
+      token,
+      pesquisa: scxSku,
+      formato: "JSON",
+    });
+    const searchReturn = searchResult.retorno as
+      | {
+          produtos?: Array<{
+            produto?: {
+              id?: string | number;
+              codigo?: string;
+              tipoVariacao?: string;
+            };
+          }>;
+        }
+      | undefined;
+    const found = searchReturn?.produtos
+      ?.map((entry) => entry.produto)
+      .find(
+        (entry) =>
+          entry?.id &&
+          entry.codigo === scxSku &&
+          String(entry.id) !== String(product.olist_product_id),
+      );
+
+    if (!found?.id || found.tipoVariacao !== "P") {
+      errors.push(`${product.id}: pai variavel duplicado nao localizado.`);
+      continue;
+    }
+
+    const detailResult = await postTinyApi("produto.obter.php", {
+      token,
+      id: String(found.id),
+      formato: "JSON",
+    });
+    const detailReturn = detailResult.retorno as
+      | {
+          produto?: {
+            id?: string | number;
+            tipoVariacao?: string;
+            variacoes?: TinyApiRecord["variacoes"];
+          };
+        }
+      | undefined;
+    const detail = detailReturn?.produto;
+
+    if (!detail?.id || detail.tipoVariacao !== "P") {
+      errors.push(`${product.id}: retorno duplicado nao e um pai variavel.`);
+      continue;
+    }
+
+    const sent = buildTinyProduct(
+      product,
+      settings.defaultOrigin,
+      1,
+      false,
+      stockMinQuantity,
+    );
+    await upsertProductChannelMapping(product, sent, {
+      status: "OK",
+      id: detail.id,
+      variacoes: detail.variacoes,
+    });
+    recovered.push(product.id);
+  }
+
+  return { attempted: candidates.length, recovered, errors };
+}
+
 async function upsertProductChannelMapping(
   product: OlistSyncProduct,
   sent: TinySentProduct,
@@ -986,6 +1090,62 @@ export async function executeOlistSync({
       JSON.stringify(settings),
     ],
   );
+
+  try {
+    const recovery = await recoverDuplicateSkuMappings({
+      products: plan.eligibleProductsList,
+      settings,
+      stockMinQuantity,
+    });
+
+    if (recovery.attempted > 0) {
+      const result: OlistSendResult = {
+        runId,
+        selectedProducts: plan.selectedProducts,
+        eligibleProducts: plan.eligibleProducts,
+        blockedProducts: plan.blockedProducts,
+        sentProducts: recovery.recovered.length,
+        failedProducts: recovery.errors.length,
+        deferredProducts: Math.max(
+          0,
+          plan.eligibleProducts - recovery.recovered.length - recovery.errors.length,
+        ),
+        errors: recovery.errors,
+      };
+
+      await getDatabasePool().query(
+        `
+          UPDATE scx_olist_sync_runs
+          SET status = $2,
+            result_snapshot = $3::jsonb,
+            error_message = $4,
+            finished_at = now()
+          WHERE id = $1
+        `,
+        [
+          runId,
+          recovery.errors.length > 0 ? "failed" : "completed",
+          JSON.stringify(result),
+          recovery.errors.join(" | ") || null,
+        ],
+      );
+
+      return result;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro desconhecido.";
+    await getDatabasePool().query(
+      `
+        UPDATE scx_olist_sync_runs
+        SET status = 'failed',
+          error_message = $2,
+          finished_at = now()
+        WHERE id = $1
+      `,
+      [runId, message],
+    );
+    throw error;
+  }
 
   const createBatches = chunks(
     plan.eligibleProductsList.filter((product) => !product.olist_product_id),

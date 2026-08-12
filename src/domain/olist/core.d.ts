@@ -47,6 +47,8 @@ export type OlistSyncProduct = {
   raw_payload?: Record<string, unknown> | null;
   olist_supplier_id?: string | null;
   olist_product_id?: string | null;
+  olist_sync_status?: string | null;
+  olist_raw_response?: Record<string, unknown> | null;
   images: OlistProductImage[];
   components?: OlistProductComponent[];
   production_steps?: string[];
