@@ -158,9 +158,9 @@ Todas as variacoes do mesmo pai devem usar exatamente os mesmos nomes de grade.
 Na Asia, a chave original do atributo vira o nome (`cor` -> `Cor`) e o campo
 `value` vira o valor (`Azul`). Como a API nao aceita acrescentar a primeira grade
 a um produto simples existente, a migracao usa duas chamadas: o cadastro antigo
-e inativado e recebe um codigo deterministico `LEG-*`; somente se isso for
-confirmado e criado um novo pai variavel com o SKU SCX original. O ID novo
-substitui o antigo no mapeamento do banco.
+e inativado, recebe um codigo deterministico `LEG-*` e um nome marcado com seu
+ID antigo; somente se isso for confirmado e criado um novo pai variavel com o
+SKU SCX e o nome originais. O ID novo substitui o antigo no mapeamento do banco.
 
 O cadastro manual exige pelo menos uma variacao. Fotos gerais do produto sao
 obrigatorias e validadas novamente no servidor. A Asia Import e normalizada para

@@ -817,6 +817,10 @@ async function sendTinyProductBatch({
 
     if (archiveExistingProduct) {
       sent.produto.codigo = `LEG-${sent.scxSku}`.slice(0, 30);
+      sent.produto.nome = `[LEGADO ${product.olist_product_id}] ${product.title}`.slice(
+        0,
+        120,
+      );
       sent.produto.situacao = "I";
       sent.produto.variacoes = undefined;
     }
