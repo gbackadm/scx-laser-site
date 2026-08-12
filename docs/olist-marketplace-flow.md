@@ -156,9 +156,11 @@ vendavel no canal.
 
 Todas as variacoes do mesmo pai devem usar exatamente os mesmos nomes de grade.
 Na Asia, a chave original do atributo vira o nome (`cor` -> `Cor`) e o campo
-`value` vira o valor (`Azul`). Produtos antigos que ja existem como simples no
-Olist passam por duas chamadas: conversao do pai para classe `V` e, somente se
-ela for confirmada, envio das variacoes.
+`value` vira o valor (`Azul`). Como a API nao aceita acrescentar a primeira grade
+a um produto simples existente, a migracao usa duas chamadas: o cadastro antigo
+e inativado e recebe um codigo deterministico `LEG-*`; somente se isso for
+confirmado e criado um novo pai variavel com o SKU SCX original. O ID novo
+substitui o antigo no mapeamento do banco.
 
 O cadastro manual exige pelo menos uma variacao. Fotos gerais do produto sao
 obrigatorias e validadas novamente no servidor. A Asia Import e normalizada para
@@ -210,7 +212,7 @@ O envio respeita:
 
 - lote maximo de 20 produtos;
 - maximo de 5 chamadas de lote por minuto;
-- conversoes simples -> variavel consomem dois lotes e respeitam o mesmo limite;
+- migracoes simples -> variavel consomem dois lotes e respeitam o mesmo limite;
 - produtos com ID Olist salvo sao atualizados;
 - produtos sem ID Olist salvo sao criados;
 - retornos OK gravam/atualizam o mapeamento no banco.

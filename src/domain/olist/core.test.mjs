@@ -120,7 +120,7 @@ test("bloqueia variacoes com nomes de grade diferentes", () => {
   );
 });
 
-test("permite converter o pai antes de enviar as variacoes", () => {
+test("permite montar o pai sem filhos durante uma migracao", () => {
   const product = validProduct();
   product.olist_product_id = "900";
 

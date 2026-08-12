@@ -791,28 +791,38 @@ async function sendTinyProductBatch({
   stockMinQuantity,
   isUpdate,
   includeVariations = true,
+  archiveExistingProduct = false,
 }: {
   products: OlistSyncProduct[];
   settings: AdminOlistSettings;
   stockMinQuantity: number;
   isUpdate: boolean;
   includeVariations?: boolean;
+  archiveExistingProduct?: boolean;
 }) {
   const token = process.env.OLIST_API_TOKEN ?? process.env.TINY_API_TOKEN;
   if (!token) {
     throw new Error("Token Olist/Tiny nao configurado.");
   }
 
-  const sentProducts = products.map((product, index) =>
-    buildTinyProduct(
+  const sentProducts = products.map((product, index) => {
+    const sent = buildTinyProduct(
       product,
       settings.defaultOrigin,
       index + 1,
       isUpdate,
       stockMinQuantity,
       { includeVariations },
-    ),
-  );
+    );
+
+    if (archiveExistingProduct) {
+      sent.produto.codigo = `LEG-${sent.scxSku}`.slice(0, 30);
+      sent.produto.situacao = "I";
+      sent.produto.variacoes = undefined;
+    }
+
+    return sent;
+  });
   const apiResult = await postTinyApi(
     isUpdate ? "produto.alterar.php" : "produto.incluir.php",
     {
@@ -837,7 +847,9 @@ async function sendTinyProductBatch({
     const record = sequenceRecord ?? records[index] ?? {};
 
     if (record.status === "OK" && record.id) {
-      await upsertProductChannelMapping(product, sentProducts[index], record);
+      if (!archiveExistingProduct) {
+        await upsertProductChannelMapping(product, sentProducts[index], record);
+      }
       results.push({ productId: product.id, ok: true });
     } else {
       await markProductOlistSyncFailed(product, record);
@@ -1005,6 +1017,7 @@ export async function executeOlistSync({
           stockMinQuantity,
           isUpdate: true,
           includeVariations: false,
+          archiveExistingProduct: true,
         });
         const conversionByProduct = new Map(
           conversionResults.map((result) => [result.productId, result]),
@@ -1025,7 +1038,7 @@ export async function executeOlistSync({
           products: productsToSend,
           settings,
           stockMinQuantity,
-          isUpdate: entry.isUpdate,
+          isUpdate: entry.requiresClassConversion ? false : entry.isUpdate,
         })),
       );
     }
@@ -1173,6 +1186,7 @@ export async function syncCatalogProductToOlistIfEnabled(productId: string) {
       stockMinQuantity,
       isUpdate: true,
       includeVariations: false,
+      archiveExistingProduct: true,
     });
 
     if (!conversionResults[0]?.ok) {
@@ -1187,7 +1201,7 @@ export async function syncCatalogProductToOlistIfEnabled(productId: string) {
     products: [product],
     settings,
     stockMinQuantity,
-    isUpdate,
+    isUpdate: isUpdate && !needsOlistClassConversion(product),
   });
   const result = results[0];
 

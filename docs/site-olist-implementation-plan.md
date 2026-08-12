@@ -233,8 +233,9 @@ Estado atual:
   grades duplicadas.
 - Normalizacao corrigida para usar nomes estaveis de grade (`Cor`, `Capacidade`
   e equivalentes): 79 elegiveis e 0 estruturas divergentes.
-- Produto ja existente como simples e convertido em duas etapas antes de receber
-  os filhos, sem ultrapassar o limite configurado de chamadas.
+- Produto ja existente como simples e migrado em duas etapas: o cadastro antigo
+  vira legado inativo e o novo pai variavel assume o SKU SCX original, sem
+  ultrapassar o limite configurado de chamadas.
 
 ## Rotina automatica Asia Import
 
