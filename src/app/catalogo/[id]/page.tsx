@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { getCatalogAccess } from "@/domain/catalog/access";
+import { PublicProductGallery } from "@/components/PublicProductGallery";
 import { toPublicCatalogProducts } from "@/domain/catalog/publicProducts";
 import type { PublicCatalogPriceTier } from "@/domain/catalog/publicTypes";
 import type { CatalogProduct, Category } from "@/domain/catalog/types";
@@ -97,7 +98,11 @@ export default async function PublicProductPage({ params }: PublicProductPagePro
 
   try {
     [products, categories, pricingRule, batchTiers] = await Promise.all([
-      catalogAccess.listCatalogProducts({ publicationStatus: "published" }),
+      catalogAccess.listCatalogProducts({
+        publicationStatus: "published",
+        requireStock: true,
+        requireImage: true,
+      }),
       catalogAccess.listCategories(),
       getGlobalPricingRule(),
       listGlobalPricingBatchTiers(),
@@ -124,7 +129,6 @@ export default async function PublicProductPage({ params }: PublicProductPagePro
   const corporateTiers = product.tiers.filter(
     (tier) => tier.profile === "corporate",
   );
-  const secondaryImages = product.imageUrls.slice(1, 5);
 
   return (
     <main className="min-h-screen bg-[#050606] text-white">
@@ -153,34 +157,11 @@ export default async function PublicProductPage({ params }: PublicProductPagePro
       </header>
 
       <section className="mx-auto grid max-w-7xl gap-8 px-5 py-8 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:px-12">
-        <div className="grid gap-4">
-          <div className="overflow-hidden rounded-md border border-white/10 bg-[#0d0f10]">
-            {product.imageUrl ? (
-              <img
-                src={product.imageUrl}
-                alt={product.title}
-                className="aspect-[4/3] w-full object-cover"
-              />
-            ) : (
-              <div className="flex aspect-[4/3] items-center justify-center bg-black/35 px-6 text-center text-sm font-bold text-zinc-500">
-                Imagem em revisao
-              </div>
-            )}
-          </div>
-
-          {secondaryImages.length > 0 ? (
-            <div className="grid grid-cols-4 gap-3">
-              {secondaryImages.map((imageUrl) => (
-                <img
-                  key={imageUrl}
-                  src={imageUrl}
-                  alt={product.title}
-                  className="aspect-square rounded border border-white/10 bg-black/35 object-cover"
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
+        <PublicProductGallery
+          title={product.title}
+          imageUrls={product.imageUrls}
+          variants={product.variants}
+        />
 
         <div className="grid content-start gap-6">
           <div>

@@ -290,7 +290,7 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
                 name="batchSize"
                 type="number"
                 min={1}
-                max={100}
+                max={10}
                 defaultValue={autoSyncSettings.batchSize}
                 className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser"
               />

@@ -13,6 +13,7 @@ import {
   PublicCatalogCard,
 } from "@/components/PublicCatalogCard";
 import type { PublicCatalogProduct } from "@/domain/catalog/publicTypes";
+import { matchesSearchText } from "@/lib/search";
 
 type PublicCatalogBrowserProps = {
   categories: string[];
@@ -45,13 +46,14 @@ export function PublicCatalogBrowser({
   const [page, setPage] = useState(1);
 
   const filteredProducts = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
-
     const filtered = products.filter((product) => {
-      const matchesSearch =
-        normalizedSearch.length === 0 ||
-        product.title.toLowerCase().includes(normalizedSearch) ||
-        product.description?.toLowerCase().includes(normalizedSearch);
+      const matchesSearch = matchesSearchText(search, [
+        product.title,
+        product.description,
+        product.category,
+        product.sku,
+        product.supplierSku,
+      ]);
       const matchesCategory =
         category === "Todas" || product.category === category;
 

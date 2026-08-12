@@ -12,10 +12,12 @@
     "db:check": "node scripts/check-catalog-db.mjs",
     "db:check-variants": "node scripts/check-variant-sync.mjs",
     "db:backfill-variants": "node scripts/backfill-asia-variants.mjs",
+    "db:repair-asia": "node scripts/repair-asia-catalog.mjs",
     "olist:check-variants": "node scripts/check-olist-variant-eligibility.mjs",
     "olist:configure-window": "node scripts/configure-olist-window.mjs",
     "olist:recover-orphans": "node scripts/recover-olist-orphans.mjs",
     "olist:clear-lock": "node scripts/clear-olist-advisory-lock.mjs",
+    "catalog:audit": "node scripts/audit-catalog-health.mjs",
     "db:copy-to-production": "node scripts/copy-catalog-db.mjs",
     "admin:create-user": "node scripts/create-admin-user.mjs"
   },

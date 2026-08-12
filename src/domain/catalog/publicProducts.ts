@@ -65,6 +65,20 @@ export function toPublicCatalogProducts(
       imageUrl: product.images[0]?.url,
       priceInCents: tierPrices[0]?.unitPriceInCents ?? product.price.amountInCents,
       tiers: tierPrices,
+      variants: (product.variants ?? [])
+        .filter((variant) => variant.isActive && variant.stockQuantity > 0)
+        .map((variant) => ({
+          id: variant.id,
+          sku: variant.scxSku,
+          supplierSku: variant.supplierSku,
+          name: variant.name,
+          color:
+            Object.entries(variant.attributes).find(
+              ([name]) => name.toLocaleLowerCase("pt-BR") === "cor",
+            )?.[1],
+          imageUrls: variant.imageUrls,
+          stockQuantity: variant.stockQuantity,
+        })),
     };
   });
 }

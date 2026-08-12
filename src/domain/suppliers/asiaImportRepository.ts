@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
+import type { PoolClient } from "pg";
 
 import { getDatabasePool } from "@/domain/catalog/db";
 
@@ -21,6 +22,7 @@ type AsiaAutoSyncSettingsRow = {
   status_filter: "true" | "false" | "all";
   last_auto_sync_at: Date | string | null;
   next_auto_sync_after: Date | string | null;
+  next_page: number;
   updated_at: Date | string;
 };
 
@@ -31,6 +33,7 @@ export type AsiaAutoSyncSettings = {
   statusFilter: "true" | "false" | "all";
   lastAutoSyncAt?: string;
   nextAutoSyncAfter?: string;
+  nextPage: number;
   updatedAt: string;
 };
 
@@ -60,6 +63,7 @@ function mapAsiaAutoSyncSettings(
     statusFilter: row.status_filter,
     lastAutoSyncAt: toIso(row.last_auto_sync_at),
     nextAutoSyncAfter: toIso(row.next_auto_sync_after),
+    nextPage: row.next_page,
     updatedAt: toIso(row.updated_at) ?? new Date().toISOString(),
   };
 }
@@ -97,11 +101,17 @@ function productPrice(product: AsiaImportProduct) {
 }
 
 function productImages(product: AsiaImportProduct) {
-  return [
-    product.imagem,
-    ...(Array.isArray(product.galeria) ? product.galeria : []),
-    ...(product.variacoes ?? []).map((variation) => variation.imagem),
-  ].filter((value): value is string => Boolean(value));
+  return Array.from(
+    new Set(
+      [
+        product.imagem,
+        ...(Array.isArray(product.galeria) ? product.galeria : []),
+        ...(product.variacoes ?? []).map((variation) => variation.imagem),
+      ]
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
 }
 
 function attributeLabel(value: string) {
@@ -117,7 +127,66 @@ function attributeLabel(value: string) {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
 }
 
-function variationAttributes(value: unknown, fallback: string) {
+const variationColorCodes: Record<string, string> = {
+  AM: "Amarelo",
+  AZ: "Azul",
+  BR: "Branco",
+  CF: "Cafe",
+  CH: "Chocolate",
+  CR: "Cru",
+  CZ: "Cinza",
+  DR: "Dourado",
+  GF: "Grafite",
+  LA: "Laranja",
+  PT: "Preto",
+  PR: "Prata",
+  RS: "Rosa",
+  RX: "Roxo",
+  VD: "Verde",
+  VM: "Vermelho",
+};
+
+function inferredVariationColor(...hints: Array<string | undefined>) {
+  const normalizedHints = hints
+    .map((hint) => hint?.normalize("NFD").replace(/[\u0300-\u036f]/g, ""))
+    .filter((hint): hint is string => Boolean(hint));
+  const words: Array<[RegExp, string]> = [
+    [/\bazul\b/i, "Azul"],
+    [/\bpreto\b|\bpreta\b/i, "Preto"],
+    [/\bbranco\b|\bbranca\b/i, "Branco"],
+    [/\bvermelh[oa]\b/i, "Vermelho"],
+    [/\bverde\b/i, "Verde"],
+    [/\bcinza\b/i, "Cinza"],
+    [/\bamarel[oa]\b/i, "Amarelo"],
+    [/\brosa\b/i, "Rosa"],
+    [/\brox[oa]\b/i, "Roxo"],
+    [/\blaranja\b/i, "Laranja"],
+    [/\bdourad[oa]\b/i, "Dourado"],
+    [/\bprat[ae]\b|\bpratead[oa]\b/i, "Prata"],
+    [/\bgrafite\b/i, "Grafite"],
+    [/\bcru\b/i, "Cru"],
+    [/\bcafe\b/i, "Cafe"],
+  ];
+
+  for (const hint of normalizedHints) {
+    for (const [pattern, color] of words) {
+      if (pattern.test(hint)) return color;
+    }
+
+    const tokens = hint.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+    for (let index = tokens.length - 1; index >= 0; index -= 1) {
+      if (variationColorCodes[tokens[index]]) return variationColorCodes[tokens[index]];
+    }
+  }
+
+  return undefined;
+}
+
+function variationAttributes(
+  value: unknown,
+  fallback: string,
+  ...hints: Array<string | undefined>
+) {
   const attributes: Record<string, string> = {};
 
   if (Array.isArray(value)) {
@@ -156,9 +225,70 @@ function variationAttributes(value: unknown, fallback: string) {
     }
   }
 
-  return Object.keys(attributes).length > 0
-    ? attributes
-    : { Modelo: fallback || "Padrao" };
+  const hasColor = Object.keys(attributes).some(
+    (name) => attributeLabel(name).toLocaleLowerCase("pt-BR") === "cor",
+  );
+  const inferredColor = hasColor ? undefined : inferredVariationColor(...hints);
+
+  if (inferredColor) attributes.Cor = inferredColor;
+  return Object.keys(attributes).length > 0 ? attributes : { Modelo: fallback || "Padrao" };
+}
+
+function variationImage(
+  product: AsiaImportProduct,
+  variation: NonNullable<AsiaImportProduct["variacoes"]>[number],
+) {
+  const directImage = variation.imagem?.trim();
+  if (directImage) return directImage;
+
+  const candidates = productImages(product);
+  if (candidates.length === 1 && (product.variacoes?.length ?? 0) === 1) {
+    return candidates[0];
+  }
+
+  const skuToken = variation.referencia
+    ?.normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
+  const bySku = candidates.find((url) =>
+    skuToken
+      ? url.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().includes(skuToken)
+      : false,
+  );
+  if (bySku) return bySku;
+
+  const color = inferredVariationColor(
+    variation.referencia,
+    variation.nome,
+    product.nome,
+  );
+  if (!color) return undefined;
+
+  const colorToken = color.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return candidates.find((url) => url.toLowerCase().includes(colorToken));
+}
+
+function automaticCatalogBlockReasons(product: AsiaImportProduct) {
+  const reasons: string[] = [];
+  const variations = product.variacoes ?? [];
+
+  if (productImages(product).length === 0) reasons.push("imagem ausente");
+  if ((productPrice(product) ?? 0) <= 0) reasons.push("custo ausente ou invalido");
+  if (variations.length === 0) reasons.push("variacoes ausentes");
+  if (
+    variations.some(
+      (variation) =>
+        (parseAsiaMoneyToCents(variation.preco) ?? productPrice(product) ?? 0) <= 0,
+    )
+  ) {
+    reasons.push("variacao sem custo valido");
+  }
+  if (variations.some((variation) => !variationImage(product, variation))) {
+    reasons.push("variacao sem imagem identificavel");
+  }
+
+  return Array.from(new Set(reasons));
 }
 
 function generatedVariationScxSku(parentScxSku: string, supplierSku: string) {
@@ -168,7 +298,7 @@ function generatedVariationScxSku(parentScxSku: string, supplierSku: string) {
 }
 
 async function syncAsiaVariationsForCatalogProduct(
-  pool: ReturnType<typeof getDatabasePool>,
+  pool: Pick<PoolClient, "query">,
   catalogProductId: string,
   product: AsiaImportProduct,
 ) {
@@ -226,7 +356,13 @@ async function syncAsiaVariationsForCatalogProduct(
     const scxSku =
       existingResult.rows[0]?.scx_sku ??
       generatedVariationScxSku(parentScxSku, supplierSku);
-    const attributes = variationAttributes(variation.atributos, name);
+    const attributes = variationAttributes(
+      variation.atributos,
+      name,
+      supplierSku,
+      name,
+      product.nome,
+    );
     const stockQuantity = Math.max(0, parseAsiaStock(variation.qtd_estoque) ?? 0);
     const priceAmountInCents = Math.round(costAmountInCents * 2.2);
 
@@ -279,8 +415,8 @@ async function syncAsiaVariationsForCatalogProduct(
       [variantId],
     );
 
-    const variationImage = variation.imagem?.trim();
-    if (variationImage) {
+    const resolvedVariationImage = variationImage(product, variation);
+    if (resolvedVariationImage) {
       await pool.query(
         `
           INSERT INTO scx_catalog_product_variant_images (
@@ -292,7 +428,7 @@ async function syncAsiaVariationsForCatalogProduct(
           )
           VALUES ($1, $2, $3, $4, 0)
         `,
-        [randomUUID(), variantId, variationImage, name],
+        [randomUUID(), variantId, resolvedVariationImage, name],
       );
     }
   }
@@ -303,6 +439,19 @@ async function syncAsiaVariationsForCatalogProduct(
       SET stock_quantity = totals.stock_quantity,
         price_amount_in_cents = COALESCE(totals.price_amount_in_cents, product.price_amount_in_cents),
         cost_amount_in_cents = COALESCE(totals.cost_amount_in_cents, product.cost_amount_in_cents),
+        publication_status = CASE
+          WHEN product.publication_status IN ('published', 'out_of_stock')
+            AND totals.stock_quantity >= (
+              SELECT COALESCE(publication_stock_min_quantity, 1000)
+              FROM scx_catalog_pricing_rules
+              WHERE scope = 'global' AND is_active = true
+              ORDER BY updated_at DESC
+              LIMIT 1
+            ) THEN 'published'
+          WHEN product.publication_status IN ('published', 'out_of_stock')
+            THEN 'out_of_stock'
+          ELSE product.publication_status
+        END,
         updated_at = now()
       FROM (
         SELECT
@@ -400,7 +549,10 @@ async function nextScxSku(
   return `SCX-${prefix}-${String(lastSequence + 1).padStart(4, "0")}`;
 }
 
-export async function upsertAsiaSupplierProducts(products: AsiaImportProduct[]) {
+export async function upsertAsiaSupplierProducts(
+  products: AsiaImportProduct[],
+  options: { ensureCatalogProduct?: boolean } = {},
+) {
   const pool = getDatabasePool();
   let importedCount = 0;
 
@@ -469,43 +621,20 @@ export async function upsertAsiaSupplierProducts(products: AsiaImportProduct[]) 
       ],
     );
 
-    await pool.query(
-      `
-        UPDATE scx_catalog_products
-        SET stock_quantity = $2,
-          cost_amount_in_cents = COALESCE($3, cost_amount_in_cents),
-          price_amount_in_cents = CASE
-            WHEN $3::integer IS NOT NULL THEN round($3::numeric * 2.2)::integer
-            ELSE price_amount_in_cents
-          END,
-          publication_status = CASE
-            WHEN publication_status = 'out_of_stock'
-              AND $2 >= (
-                SELECT COALESCE(publication_stock_min_quantity, 1000)
-                FROM scx_catalog_pricing_rules
-                WHERE scope = 'global'
-                  AND is_active = true
-                ORDER BY updated_at DESC
-                LIMIT 1
-              )
-              THEN 'published'
-            WHEN publication_status = 'published'
-              AND $2 < (
-                SELECT COALESCE(publication_stock_min_quantity, 1000)
-                FROM scx_catalog_pricing_rules
-                WHERE scope = 'global'
-                  AND is_active = true
-                ORDER BY updated_at DESC
-                LIMIT 1
-              )
-              THEN 'out_of_stock'
-            ELSE publication_status
-          END,
-          updated_at = now()
-        WHERE supplier_product_id = $1
-      `,
-      [supplierProductId, stockAvailable, suggestedPriceAmountInCents],
-    );
+    if (options.ensureCatalogProduct) {
+      const blockReasons = automaticCatalogBlockReasons(product);
+      if (blockReasons.length > 0) {
+        await pool.query(
+          `
+            UPDATE scx_catalog_supplier_products
+            SET import_status = 'sync_error', updated_at = now()
+            WHERE id = $1
+          `,
+          [supplierProductId],
+        );
+        throw new Error(`Produto bloqueado: ${blockReasons.join(", ")}.`);
+      }
+    }
 
     const catalogProductResult = await pool.query<{ id: string }>(
       `
@@ -518,29 +647,11 @@ export async function upsertAsiaSupplierProducts(products: AsiaImportProduct[]) 
       [supplierProductId, externalId],
     );
 
-    if (catalogProductResult.rows[0]) {
-      await syncAsiaVariationsForCatalogProduct(
-        pool,
-        catalogProductResult.rows[0].id,
-        product,
-      );
+    if (catalogProductResult.rows[0] || options.ensureCatalogProduct) {
+      await createCatalogDraftFromSupplierProduct(supplierProductId, {
+        publishNewProductByStock: options.ensureCatalogProduct,
+      });
     }
-
-    await pool.query(
-      `
-        UPDATE scx_catalog_supplier_products supplier_product
-        SET import_status = 'mapped',
-          updated_at = now()
-        WHERE supplier_product.id = $1
-          AND EXISTS (
-            SELECT 1
-            FROM scx_catalog_products catalog_product
-            WHERE catalog_product.supplier_product_id = supplier_product.id
-              OR catalog_product.sku = supplier_product.external_id
-          )
-      `,
-      [supplierProductId],
-    );
 
     importedCount += 1;
   }
@@ -566,7 +677,7 @@ export async function updateAsiaAutoSyncSettings(
   input: AsiaAutoSyncSettingsUpdate,
 ) {
   const intervalMinutes = Math.max(10, Math.round(input.intervalMinutes));
-  const batchSize = Math.min(100, Math.max(1, Math.round(input.batchSize)));
+  const batchSize = Math.min(10, Math.max(1, Math.round(input.batchSize)));
   const nextAutoSyncAfter = input.isEnabled
     ? new Date(Date.now() + intervalMinutes * 60_000)
     : null;
@@ -642,6 +753,7 @@ export async function listAsiaSupplierProductsForReview(limit = 20) {
 
 export async function createCatalogDraftFromSupplierProduct(
   supplierProductId: string,
+  options: { publishNewProductByStock?: boolean } = {},
 ) {
   const pool = getDatabasePool();
 
@@ -668,11 +780,28 @@ export async function createCatalogDraftFromSupplierProduct(
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "sem-categoria"}`;
+  const minimumStockResult = await pool.query<{ minimum_stock: number }>(
+    `
+      SELECT COALESCE(publication_stock_min_quantity, 1000)::int AS minimum_stock
+      FROM scx_catalog_pricing_rules
+      WHERE scope = 'global'
+        AND is_active = true
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `,
+  );
+  const minimumStock = minimumStockResult.rows[0]?.minimum_stock ?? 1000;
+  const initialPublicationStatus = options.publishNewProductByStock
+    ? (supplierProduct.stock_available ?? 0) >= minimumStock
+      ? "published"
+      : "out_of_stock"
+    : "draft";
 
-  await pool.query("BEGIN");
+  const client = await pool.connect();
+  await client.query("BEGIN");
 
   try {
-    await pool.query(
+    await client.query(
       `
         INSERT INTO scx_catalog_categories (id, name, slug, sort_order)
         VALUES ($1, $2, $1, 900)
@@ -684,9 +813,9 @@ export async function createCatalogDraftFromSupplierProduct(
     );
 
     const catalogProductId = `catalog-${supplierProduct.external_id}`;
-    const scxSku = await nextScxSku(pool, categoryName);
+    const scxSku = await nextScxSku(client, categoryName);
 
-    await pool.query(
+    const catalogProductResult = await client.query<{ id: string }>(
       `
         INSERT INTO scx_catalog_products (
           id,
@@ -703,7 +832,7 @@ export async function createCatalogDraftFromSupplierProduct(
           stock_quantity,
           tags
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9, 'tracked', $10, '{}')
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'tracked', $11, '{}')
         ON CONFLICT (sku) DO UPDATE SET
           scx_sku = COALESCE(scx_catalog_products.scx_sku, EXCLUDED.scx_sku),
           title = EXCLUDED.title,
@@ -736,6 +865,7 @@ export async function createCatalogDraftFromSupplierProduct(
             ELSE scx_catalog_products.publication_status
           END,
           updated_at = now()
+        RETURNING id
       `,
       [
         catalogProductId,
@@ -745,30 +875,33 @@ export async function createCatalogDraftFromSupplierProduct(
         supplierProduct.raw_description,
         categoryId,
         supplierProduct.id,
+        initialPublicationStatus,
         Math.round((supplierProduct.suggested_price_amount_in_cents ?? 0) * 2.2),
         supplierProduct.suggested_price_amount_in_cents ?? 0,
         supplierProduct.stock_available ?? 0,
       ],
     );
+    const resolvedCatalogProductId =
+      catalogProductResult.rows[0]?.id ?? catalogProductId;
 
     await syncAsiaVariationsForCatalogProduct(
-      pool,
-      catalogProductId,
+      client,
+      resolvedCatalogProductId,
       supplierProduct.raw_payload as AsiaImportProduct,
     );
 
-    await pool.query(
+    await client.query(
       `
         DELETE FROM scx_catalog_product_images
         WHERE product_id = $1
       `,
-      [catalogProductId],
+      [resolvedCatalogProductId],
     );
 
     for (const [index, url] of (
       supplierProduct.raw_image_urls ?? []
     ).entries()) {
-      await pool.query(
+      await client.query(
         `
           INSERT INTO scx_catalog_product_images (
             id,
@@ -780,11 +913,11 @@ export async function createCatalogDraftFromSupplierProduct(
           )
           VALUES ($1, $2, $3, $4, 'supplier', $5)
         `,
-        [randomUUID(), catalogProductId, url, supplierProduct.raw_name, index],
+        [randomUUID(), resolvedCatalogProductId, url, supplierProduct.raw_name, index],
       );
     }
 
-    await pool.query(
+    await client.query(
       `
         UPDATE scx_catalog_supplier_products
         SET import_status = 'mapped',
@@ -794,12 +927,14 @@ export async function createCatalogDraftFromSupplierProduct(
       [supplierProduct.id],
     );
 
-    await pool.query("COMMIT");
+    await client.query("COMMIT");
 
-    return catalogProductId;
+    return resolvedCatalogProductId;
   } catch (error) {
-    await pool.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw error;
+  } finally {
+    client.release();
   }
 }
 
@@ -961,23 +1096,49 @@ export async function syncCatalogProductsFromAsiaImportBatch(
 }
 
 export async function runScheduledAsiaImportSyncIfDue() {
-  const settings = await getAsiaAutoSyncSettings();
-  const now = new Date();
-  const nextAutoSyncAfter = settings.nextAutoSyncAfter
-    ? new Date(settings.nextAutoSyncAfter)
-    : null;
+  const pool = getDatabasePool();
 
-  if (!settings.isEnabled) {
-    return { skipped: true, reason: "Rotina Asia Import desativada." };
+  await pool.query(
+    `
+      UPDATE scx_catalog_sync_runs
+      SET status = 'failed',
+        finished_at = now(),
+        error_message = COALESCE(error_message, 'Execucao anterior interrompida pelo limite de tempo.')
+      WHERE source = 'supplier_import'
+        AND status = 'running'
+        AND started_at < now() - interval '3 minutes'
+    `,
+  );
+
+  const claimResult = await pool.query<AsiaAutoSyncSettingsRow>(
+    `
+      UPDATE scx_supplier_auto_sync_settings
+      SET next_auto_sync_after = now() + make_interval(mins => interval_minutes),
+        updated_at = now()
+      WHERE supplier_id = $1
+        AND is_enabled = true
+        AND (next_auto_sync_after IS NULL OR next_auto_sync_after <= now())
+      RETURNING *
+    `,
+    [supplierId],
+  );
+  const claimedSettings = claimResult.rows[0];
+
+  if (!claimedSettings) {
+    const settings = await getAsiaAutoSyncSettings();
+    return {
+      skipped: true,
+      reason: settings.isEnabled
+        ? "Ainda nao chegou o horario da proxima rotina."
+        : "Rotina Asia Import desativada.",
+    };
   }
 
-  if (nextAutoSyncAfter && nextAutoSyncAfter > now) {
-    return { skipped: true, reason: "Ainda nao chegou o horario da proxima rotina." };
-  }
+  const settings = mapAsiaAutoSyncSettings(claimedSettings);
 
   const syncRunId = randomUUID();
 
-  await getDatabasePool().query(
+  await pool.query(
     `
       INSERT INTO scx_catalog_sync_runs (
         id,
@@ -992,51 +1153,79 @@ export async function runScheduledAsiaImportSyncIfDue() {
   );
 
   try {
-    const result = await syncCatalogProductsFromAsiaImportBatch(
-      settings.batchSize,
-      settings.statusFilter,
-    );
-    const nextRun = new Date(now.getTime() + settings.intervalMinutes * 60_000);
+    const page = Math.max(1, settings.nextPage || 1);
+    const response = await listAsiaImportProducts({
+      pagina: page,
+      porPagina: Math.min(settings.batchSize, 10),
+      status: settings.statusFilter,
+    });
+    const products = response.produtos ?? [];
+    const errors: string[] = [];
+    let syncedCount = 0;
 
-    await getDatabasePool().query(
+    for (const product of products) {
+      try {
+        await upsertAsiaSupplierProducts([product], {
+          ensureCatalogProduct: true,
+        });
+        syncedCount += 1;
+      } catch (error) {
+        const reference = productExternalId(product);
+        const message = error instanceof Error ? error.message : "Erro desconhecido.";
+        errors.push(`${reference}: ${message}`);
+      }
+    }
+
+    const currentPage = Math.max(1, response.pagina ?? page);
+    const totalPages = Math.max(1, response.total_paginas ?? currentPage);
+    const nextPage = currentPage >= totalPages ? 1 : currentPage + 1;
+
+    await pool.query(
       `
         UPDATE scx_catalog_sync_runs
         SET status = $2,
           finished_at = now(),
           imported_count = $3,
-          mapped_count = $3,
-          error_message = $4
+          mapped_count = $4,
+          error_message = $5
         WHERE id = $1
       `,
       [
         syncRunId,
-        result.errorCount > 0 ? "failed" : "completed",
-        result.syncedCount,
-        result.errors.slice(0, 5).join(" | ") || null,
+        errors.length > 0 ? "failed" : "completed",
+        products.length,
+        syncedCount,
+        errors.slice(0, 5).join(" | ") || null,
       ],
     );
 
-    await getDatabasePool().query(
+    await pool.query(
       `
         UPDATE scx_supplier_auto_sync_settings
         SET last_auto_sync_at = $2,
-          next_auto_sync_after = $3,
+          next_page = $3,
           updated_at = now()
         WHERE supplier_id = $1
       `,
-      [supplierId, now, nextRun],
+      [supplierId, new Date(), nextPage],
     );
 
     return {
       skipped: false,
       syncRunId,
-      ...result,
-      nextAutoSyncAfter: nextRun.toISOString(),
+      page: currentPage,
+      nextPage,
+      totalPages,
+      totalCount: products.length,
+      syncedCount,
+      errorCount: errors.length,
+      errors,
+      nextAutoSyncAfter: settings.nextAutoSyncAfter,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido.";
 
-    await getDatabasePool().query(
+    await pool.query(
       `
         UPDATE scx_catalog_sync_runs
         SET status = 'failed',

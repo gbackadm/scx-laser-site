@@ -46,7 +46,13 @@ export function createDemoCatalogAccess(data: DemoCatalogAccessData): CatalogAcc
           !filters.publicationStatus ||
           product.publicationStatus === filters.publicationStatus;
 
-        return hasStock && hasImage && matchesSearch && matchesCategory && matchesStatus;
+        return (
+          (!filters.requireStock || hasStock) &&
+          (!filters.requireImage || hasImage) &&
+          matchesSearch &&
+          matchesCategory &&
+          matchesStatus
+        );
       });
     },
     async listSupplierProducts() {

@@ -15,4 +15,15 @@ export type PublicCatalogProduct = {
   imageUrl?: string;
   priceInCents: number;
   tiers: PublicCatalogPriceTier[];
+  variants: PublicCatalogVariant[];
+};
+
+export type PublicCatalogVariant = {
+  id: string;
+  sku: string;
+  supplierSku: string;
+  name: string;
+  color?: string;
+  imageUrls: string[];
+  stockQuantity: number;
 };

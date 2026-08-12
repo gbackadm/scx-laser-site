@@ -9,6 +9,7 @@ import type {
   AuditLogEntry,
   CatalogListFilters,
   CatalogProduct,
+  CatalogProductVariant,
   Category,
   EntityId,
   ProductImageReference,
@@ -47,6 +48,7 @@ function mapImage(row: QueryResultRow): ProductImageReference {
 function mapCatalogProduct(
   row: QueryResultRow,
   images: ProductImageReference[],
+  variants: CatalogProductVariant[],
 ): CatalogProduct {
   return {
     id: row.id,
@@ -66,6 +68,7 @@ function mapCatalogProduct(
       lowStockThreshold: row.low_stock_threshold ?? undefined,
     },
     images,
+    variants,
     tags: row.tags ?? [],
     updatedAt:
       row.updated_at instanceof Date
@@ -105,7 +108,12 @@ export function createPostgresCatalogAccess(): CatalogAccess {
       if (filters.search?.trim()) {
         values.push(`%${filters.search.trim()}%`);
         where.push(
-          `(p.title ILIKE $${values.length} OR p.sku ILIKE $${values.length} OR p.scx_sku ILIKE $${values.length})`,
+          `(p.title ILIKE $${values.length}
+            OR p.description ILIKE $${values.length}
+            OR p.sku ILIKE $${values.length}
+            OR p.scx_sku ILIKE $${values.length}
+            OR sp.supplier_name ILIKE $${values.length}
+            OR category.name ILIKE $${values.length})`,
         );
       }
 
@@ -119,15 +127,20 @@ export function createPostgresCatalogAccess(): CatalogAccess {
         where.push(`p.publication_status = $${values.length}`);
       }
 
-      where.push("p.stock_quantity > 0");
-      where.push(`
-        EXISTS (
-          SELECT 1
-          FROM scx_catalog_product_images pi
-          WHERE pi.product_id = p.id
-            AND btrim(pi.url) <> ''
-        )
-      `);
+      if (filters.requireStock) {
+        where.push("p.stock_quantity > 0");
+      }
+
+      if (filters.requireImage) {
+        where.push(`
+          EXISTS (
+            SELECT 1
+            FROM scx_catalog_product_images pi
+            WHERE pi.product_id = p.id
+              AND btrim(pi.url) <> ''
+          )
+        `);
+      }
 
       const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
       const result = await getDatabasePool().query(
@@ -136,6 +149,8 @@ export function createPostgresCatalogAccess(): CatalogAccess {
           FROM scx_catalog_products p
           LEFT JOIN scx_catalog_supplier_products sp
             ON sp.id = p.supplier_product_id
+          LEFT JOIN scx_catalog_categories category
+            ON category.id = p.category_id
           ${whereSql}
           ORDER BY p.updated_at DESC, p.title ASC
         `,
@@ -143,6 +158,7 @@ export function createPostgresCatalogAccess(): CatalogAccess {
       );
       const productIds = result.rows.map((row) => row.id);
       const imagesByProduct = new Map<EntityId, ProductImageReference[]>();
+      const variantsByProduct = new Map<EntityId, CatalogProductVariant[]>();
 
       if (productIds.length > 0) {
         const imageResult = await getDatabasePool().query(
@@ -162,10 +178,54 @@ export function createPostgresCatalogAccess(): CatalogAccess {
             image,
           ]);
         }
+
+        const variantResult = await getDatabasePool().query(
+          `
+            SELECT
+              variant.*,
+              COALESCE(
+                array_agg(variant_image.url ORDER BY variant_image.sort_order, variant_image.id)
+                  FILTER (WHERE variant_image.url IS NOT NULL),
+                '{}'::text[]
+              ) AS image_urls
+            FROM scx_catalog_product_variants variant
+            LEFT JOIN scx_catalog_product_variant_images variant_image
+              ON variant_image.variant_id = variant.id
+            WHERE variant.product_id = ANY($1)
+            GROUP BY variant.id
+            ORDER BY variant.product_id, variant.sort_order, variant.id
+          `,
+          [productIds],
+        );
+
+        for (const row of variantResult.rows) {
+          const variant: CatalogProductVariant = {
+            id: row.id,
+            productId: row.product_id,
+            scxSku: row.scx_sku,
+            supplierSku: row.supplier_sku,
+            name: row.name,
+            price: { currency: "BRL", amountInCents: row.price_amount_in_cents },
+            cost: money(row.cost_amount_in_cents),
+            stockQuantity: row.stock_quantity,
+            attributes: row.attributes ?? {},
+            imageUrls: row.image_urls ?? [],
+            isActive: row.is_active,
+            sortOrder: row.sort_order,
+          };
+          variantsByProduct.set(row.product_id, [
+            ...(variantsByProduct.get(row.product_id) ?? []),
+            variant,
+          ]);
+        }
       }
 
       return result.rows.map((row) =>
-        mapCatalogProduct(row, imagesByProduct.get(row.id) ?? []),
+        mapCatalogProduct(
+          row,
+          imagesByProduct.get(row.id) ?? [],
+          variantsByProduct.get(row.id) ?? [],
+        ),
       );
     },
     async listSupplierProducts() {

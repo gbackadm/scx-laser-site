@@ -50,7 +50,36 @@ function attributeLabel(value) {
     : "";
 }
 
-function normalizeAttributes(value, fallback) {
+const colorCodes = {
+  AM: "Amarelo", AZ: "Azul", BR: "Branco", CF: "Cafe", CH: "Chocolate",
+  CR: "Cru", CZ: "Cinza", DR: "Dourado", GF: "Grafite", LA: "Laranja",
+  PT: "Preto", PR: "Prata", RS: "Rosa", RX: "Roxo", VD: "Verde", VM: "Vermelho",
+};
+
+function inferColor(...hints) {
+  const words = [
+    [/\bazul\b/i, "Azul"], [/\bpret[oa]\b/i, "Preto"],
+    [/\bbranc[oa]\b/i, "Branco"], [/\bvermelh[oa]\b/i, "Vermelho"],
+    [/\bverde\b/i, "Verde"], [/\bcinza\b/i, "Cinza"],
+    [/\bamarel[oa]\b/i, "Amarelo"], [/\brosa\b/i, "Rosa"],
+    [/\brox[oa]\b/i, "Roxo"], [/\blaranja\b/i, "Laranja"],
+    [/\bdourad[oa]\b/i, "Dourado"], [/\bprat[ae]\b|\bpratead[oa]\b/i, "Prata"],
+    [/\bgrafite\b/i, "Grafite"], [/\bcru\b/i, "Cru"], [/\bcafe\b/i, "Cafe"],
+  ];
+
+  for (const rawHint of hints.filter(Boolean)) {
+    const hint = String(rawHint).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    for (const [pattern, color] of words) if (pattern.test(hint)) return color;
+    const tokens = hint.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+    for (let index = tokens.length - 1; index >= 0; index -= 1) {
+      if (colorCodes[tokens[index]]) return colorCodes[tokens[index]];
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeAttributes(value, fallback, ...hints) {
   const attributes = {};
 
   if (Array.isArray(value)) {
@@ -80,9 +109,31 @@ function normalizeAttributes(value, fallback) {
     }
   }
 
-  return Object.keys(attributes).length > 0
-    ? attributes
-    : { Modelo: fallback || "Padrao" };
+  const hasColor = Object.keys(attributes).some(
+    (name) => attributeLabel(name).toLowerCase() === "cor",
+  );
+  const color = hasColor ? undefined : inferColor(...hints);
+  if (color) attributes.Cor = color;
+  return Object.keys(attributes).length > 0 ? attributes : { Modelo: fallback || "Padrao" };
+}
+
+function productImages(product) {
+  return Array.from(new Set([
+    product.imagem,
+    ...(Array.isArray(product.galeria) ? product.galeria : []),
+    ...(product.variacoes ?? []).map((variation) => variation?.imagem),
+  ].map((value) => String(value ?? "").trim()).filter(Boolean)));
+}
+
+function resolveVariationImage(product, variation) {
+  const direct = String(variation?.imagem ?? "").trim();
+  if (direct) return direct;
+  const candidates = productImages(product);
+  if (candidates.length === 1 && (product.variacoes?.length ?? 0) === 1) return candidates[0];
+  const skuToken = String(variation?.referencia ?? "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  return candidates.find((url) =>
+    skuToken && url.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().includes(skuToken),
+  );
 }
 
 function variationScxSku(parentScxSku, supplierSku) {
@@ -142,8 +193,14 @@ try {
           costAmountInCents,
           priceAmountInCents: Math.round(costAmountInCents * 2.2),
           stockQuantity: parseStock(variation?.qtd_estoque),
-          attributes: normalizeAttributes(variation?.atributos, name),
-          imageUrl: String(variation?.imagem ?? "").trim(),
+          attributes: normalizeAttributes(
+            variation?.atributos,
+            name,
+            supplierSku,
+            name,
+            rawPayload.nome,
+          ),
+          imageUrl: resolveVariationImage(rawPayload, variation),
           sortOrder: index,
         },
       ];
@@ -241,6 +298,19 @@ try {
           SET stock_quantity = totals.stock_quantity,
             price_amount_in_cents = COALESCE(totals.price_amount_in_cents, catalog_product.price_amount_in_cents),
             cost_amount_in_cents = COALESCE(totals.cost_amount_in_cents, catalog_product.cost_amount_in_cents),
+            publication_status = CASE
+              WHEN catalog_product.publication_status IN ('published', 'out_of_stock')
+                AND totals.stock_quantity >= (
+                  SELECT COALESCE(publication_stock_min_quantity, 1000)
+                  FROM scx_catalog_pricing_rules
+                  WHERE scope = 'global' AND is_active = true
+                  ORDER BY updated_at DESC
+                  LIMIT 1
+                ) THEN 'published'
+              WHEN catalog_product.publication_status IN ('published', 'out_of_stock')
+                THEN 'out_of_stock'
+              ELSE catalog_product.publication_status
+            END,
             updated_at = now()
           FROM (
             SELECT

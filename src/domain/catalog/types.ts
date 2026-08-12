@@ -41,6 +41,21 @@ export type ProductImageReference = {
   sortOrder: number;
 };
 
+export type CatalogProductVariant = {
+  id: EntityId;
+  productId: EntityId;
+  scxSku: string;
+  supplierSku: string;
+  name: string;
+  price: MoneyAmount;
+  cost?: MoneyAmount;
+  stockQuantity: number;
+  attributes: Record<string, string>;
+  imageUrls: string[];
+  isActive: boolean;
+  sortOrder: number;
+};
+
 export type SupplierProduct = {
   id: EntityId;
   supplierId: EntityId;
@@ -76,6 +91,7 @@ export type CatalogProduct = {
     lowStockThreshold?: number;
   };
   images: ProductImageReference[];
+  variants?: CatalogProductVariant[];
   tags: string[];
   updatedAt: string;
 };
@@ -129,4 +145,6 @@ export type CatalogListFilters = {
   search?: string;
   categoryId?: EntityId;
   publicationStatus?: CatalogPublicationStatus;
+  requireStock?: boolean;
+  requireImage?: boolean;
 };

@@ -32,7 +32,11 @@ export default async function PublicCatalogPage() {
 
   try {
     [products, categories, pricingRule, batchTiers] = await Promise.all([
-      catalogAccess.listCatalogProducts({ publicationStatus: "published" }),
+      catalogAccess.listCatalogProducts({
+        publicationStatus: "published",
+        requireStock: true,
+        requireImage: true,
+      }),
       catalogAccess.listCategories(),
       getGlobalPricingRule(),
       listGlobalPricingBatchTiers(),

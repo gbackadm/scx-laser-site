@@ -13,6 +13,7 @@ import type {
   AdminProductStatus,
 } from "@/domain/catalog/viewModels";
 import { publicationStatusLabel } from "@/domain/catalog/viewModels";
+import { matchesSearchText } from "@/lib/search";
 
 const statuses: Array<AdminProductStatus | "Todos"> = [
   "Todos",
@@ -157,18 +158,19 @@ export function CatalogPanel({
   }
 
   const products = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
-
     const filteredProducts = catalogProducts.filter((product) => {
       if (deletedProductIds.has(product.catalogId)) {
         return false;
       }
 
-      const matchesSearch =
-        normalizedSearch.length === 0 ||
-        product.name.toLowerCase().includes(normalizedSearch) ||
-        product.sku.toLowerCase().includes(normalizedSearch) ||
-        product.scxSku?.toLowerCase().includes(normalizedSearch);
+      const matchesSearch = matchesSearchText(search, [
+        product.name,
+        product.description,
+        product.category,
+        product.supplier,
+        product.sku,
+        product.scxSku,
+      ]);
       const matchesCategory = category === "Todas" || product.category === category;
       const matchesStatus = status === "Todos" || product.status === status;
 
@@ -282,7 +284,7 @@ export function CatalogPanel({
               futura API autenticada.
             </p>
             <p className="mt-2 max-w-2xl text-xs font-bold uppercase tracking-[0.12em] text-emerald-200">
-              Lista filtrada: somente produtos com estoque disponivel e imagem.
+              Lista completa para revisar produtos publicados, inativos e pendentes.
             </p>
             <p className="mt-2 text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">
               Origem: {sourceLabel}
@@ -334,7 +336,7 @@ export function CatalogPanel({
                 setSearch(event.target.value);
                 setCurrentPage(1);
               }}
-              placeholder="Buscar por nome ou codigo"
+              placeholder="Buscar nome, descricao, categoria, fornecedor ou codigo"
               className="h-11 w-full rounded border border-white/12 bg-black/40 pl-10 pr-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-laser"
             />
           </label>
@@ -762,7 +764,7 @@ export function CatalogPanel({
 
       <div className="flex flex-col gap-3 border-t border-white/10 px-5 py-4 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          {visibleProducts.length} de {products.length} item(ns) exibido(s) apos filtro de estoque e imagem.
+          {visibleProducts.length} de {products.length} item(ns) exibido(s).
           Publicacao exige papel owner ou manager; seller permanece somente leitura.
         </div>
         {pageSize !== "Todos" ? (
