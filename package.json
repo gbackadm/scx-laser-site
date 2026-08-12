@@ -13,6 +13,7 @@
     "db:check-variants": "node scripts/check-variant-sync.mjs",
     "db:backfill-variants": "node scripts/backfill-asia-variants.mjs",
     "olist:check-variants": "node scripts/check-olist-variant-eligibility.mjs",
+    "olist:configure-window": "node scripts/configure-olist-window.mjs",
     "db:copy-to-production": "node scripts/copy-catalog-db.mjs",
     "admin:create-user": "node scripts/create-admin-user.mjs"
   },

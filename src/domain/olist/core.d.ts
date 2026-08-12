@@ -68,6 +68,7 @@ export type OlistPlanSummary = {
   willBeInactive: number;
   creates: number;
   updates: number;
+  classConversions: number;
   estimatedApiCalls: number;
   eligibleProductsList: OlistSyncProduct[];
   blockedProductsList: OlistBlockedProduct[];
@@ -91,6 +92,7 @@ export function buildTinyProduct(
   sequence: number,
   isUpdate: boolean,
   stockMinQuantity: number,
+  options?: { includeVariations?: boolean },
 ): {
   produto: Record<string, unknown>;
   scxSku: string;

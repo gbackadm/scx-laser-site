@@ -39,13 +39,26 @@ function parseStock(value) {
   return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
+function attributeLabel(value) {
+  const normalized = String(value)
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  return normalized
+    ? normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase()
+    : "";
+}
+
 function normalizeAttributes(value, fallback) {
   const attributes = {};
 
   if (Array.isArray(value)) {
     for (const rawEntry of value) {
       const entry = rawEntry && typeof rawEntry === "object" ? rawEntry : {};
-      const name = String(entry.name ?? entry.nome ?? entry.slug ?? "").trim();
+      const name = attributeLabel(
+        entry.attribute ?? entry.atributo ?? entry.key ?? entry.slug ?? entry.name ?? entry.nome ?? "",
+      );
       const attributeValue = String(entry.value ?? entry.valor ?? "").trim();
       if (name && attributeValue) {
         attributes[name] = attributeValue;
@@ -54,7 +67,7 @@ function normalizeAttributes(value, fallback) {
   } else if (value && typeof value === "object") {
     for (const [key, rawValue] of Object.entries(value)) {
       if (rawValue && typeof rawValue === "object") {
-        const name = String(rawValue.name ?? rawValue.nome ?? key).trim();
+        const name = attributeLabel(key);
         const attributeValue = String(
           rawValue.value ?? rawValue.valor ?? rawValue.label ?? "",
         ).trim();

@@ -790,11 +790,13 @@ async function sendTinyProductBatch({
   settings,
   stockMinQuantity,
   isUpdate,
+  includeVariations = true,
 }: {
   products: OlistSyncProduct[];
   settings: AdminOlistSettings;
   stockMinQuantity: number;
   isUpdate: boolean;
+  includeVariations?: boolean;
 }) {
   const token = process.env.OLIST_API_TOKEN ?? process.env.TINY_API_TOKEN;
   if (!token) {
@@ -808,6 +810,7 @@ async function sendTinyProductBatch({
       index + 1,
       isUpdate,
       stockMinQuantity,
+      { includeVariations },
     ),
   );
   const apiResult = await postTinyApi(
@@ -855,6 +858,14 @@ function chunks<T>(items: T[], size: number) {
     result.push(items.slice(index, index + size));
   }
   return result;
+}
+
+function needsOlistClassConversion(product: OlistSyncProduct) {
+  return Boolean(
+    product.olist_product_id &&
+      product.variants?.some((variant) => variant.is_active) &&
+      !product.variants?.some((variant) => variant.olist_variant_id),
+  );
 }
 
 export type OlistSendResult = {
@@ -954,15 +965,28 @@ export async function executeOlistSync({
   const createBatches = chunks(
     plan.eligibleProductsList.filter((product) => !product.olist_product_id),
     settings.batchSize,
-  ).map((batch) => ({ batch, isUpdate: false }));
-  const updateBatches = chunks(
-    plan.eligibleProductsList.filter((product) => product.olist_product_id),
+  ).map((batch) => ({ batch, isUpdate: false, requiresClassConversion: false, apiCalls: 1 }));
+  const regularUpdateBatches = chunks(
+    plan.eligibleProductsList.filter(
+      (product) => product.olist_product_id && !needsOlistClassConversion(product),
+    ),
     settings.batchSize,
-  ).map((batch) => ({ batch, isUpdate: true }));
-  const allBatches = [...createBatches, ...updateBatches];
-  const selectedBatches = allBatches.slice(0, settings.batchCallsPerMinute);
+  ).map((batch) => ({ batch, isUpdate: true, requiresClassConversion: false, apiCalls: 1 }));
+  const conversionBatches = chunks(
+    plan.eligibleProductsList.filter(needsOlistClassConversion),
+    settings.batchSize,
+  ).map((batch) => ({ batch, isUpdate: true, requiresClassConversion: true, apiCalls: 2 }));
+  const allBatches = [...createBatches, ...regularUpdateBatches, ...conversionBatches];
+  let selectedApiCalls = 0;
+  const selectedBatches = allBatches.filter((entry) => {
+    if (selectedApiCalls + entry.apiCalls > settings.batchCallsPerMinute) {
+      return false;
+    }
+    selectedApiCalls += entry.apiCalls;
+    return true;
+  });
   const deferredProducts = allBatches
-    .slice(settings.batchCallsPerMinute)
+    .filter((entry) => !selectedBatches.includes(entry))
     .reduce((total, entry) => total + entry.batch.length, 0);
   const batchResults: Array<{
     productId: string;
@@ -972,9 +996,33 @@ export async function executeOlistSync({
 
   try {
     for (const entry of selectedBatches) {
+      let productsToSend = entry.batch;
+
+      if (entry.requiresClassConversion) {
+        const conversionResults = await sendTinyProductBatch({
+          products: entry.batch,
+          settings,
+          stockMinQuantity,
+          isUpdate: true,
+          includeVariations: false,
+        });
+        const conversionByProduct = new Map(
+          conversionResults.map((result) => [result.productId, result]),
+        );
+
+        batchResults.push(...conversionResults.filter((result) => !result.ok));
+        productsToSend = entry.batch.filter(
+          (product) => conversionByProduct.get(product.id)?.ok,
+        );
+      }
+
+      if (productsToSend.length === 0) {
+        continue;
+      }
+
       batchResults.push(
         ...(await sendTinyProductBatch({
-          products: entry.batch,
+          products: productsToSend,
           settings,
           stockMinQuantity,
           isUpdate: entry.isUpdate,
@@ -1118,6 +1166,23 @@ export async function syncCatalogProductToOlistIfEnabled(productId: string) {
   }
 
   const isUpdate = Boolean(product.olist_product_id);
+  if (needsOlistClassConversion(product)) {
+    const conversionResults = await sendTinyProductBatch({
+      products: [product],
+      settings,
+      stockMinQuantity,
+      isUpdate: true,
+      includeVariations: false,
+    });
+
+    if (!conversionResults[0]?.ok) {
+      throw new Error(
+        conversionResults[0]?.error ??
+          "Olist/Tiny nao confirmou a conversao do produto pai.",
+      );
+    }
+  }
+
   const results = await sendTinyProductBatch({
     products: [product],
     settings,

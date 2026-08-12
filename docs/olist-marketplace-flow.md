@@ -154,6 +154,12 @@ com `codigo`, `preco`, `estoque_atual` e `grade`. Variacao desativada que ja
 existe no Olist continua no payload com estoque zero para nao permanecer
 vendavel no canal.
 
+Todas as variacoes do mesmo pai devem usar exatamente os mesmos nomes de grade.
+Na Asia, a chave original do atributo vira o nome (`cor` -> `Cor`) e o campo
+`value` vira o valor (`Azul`). Produtos antigos que ja existem como simples no
+Olist passam por duas chamadas: conversao do pai para classe `V` e, somente se
+ela for confirmada, envio das variacoes.
+
 O cadastro manual exige pelo menos uma variacao. Fotos gerais do produto sao
 obrigatorias e validadas novamente no servidor. A Asia Import e normalizada para
 as mesmas tabelas, portanto o fluxo do Olist nao depende do formato original do
@@ -204,6 +210,7 @@ O envio respeita:
 
 - lote maximo de 20 produtos;
 - maximo de 5 chamadas de lote por minuto;
+- conversoes simples -> variavel consomem dois lotes e respeitam o mesmo limite;
 - produtos com ID Olist salvo sao atualizados;
 - produtos sem ID Olist salvo sao criados;
 - retornos OK gravam/atualizam o mapeamento no banco.

@@ -102,3 +102,32 @@ test("mantem produto abaixo de 1000 como inativo", () => {
   assert.equal(productShouldBeActive(product, 1000), false);
   assert.equal(buildTinyProduct(product, "2", 1, false, 1000).produto.situacao, "I");
 });
+
+test("bloqueia variacoes com nomes de grade diferentes", () => {
+  const product = validProduct();
+  product.variants.push({
+    ...product.variants[0],
+    id: "variant-2",
+    scx_sku: "SCX-CAN-0001-VM",
+    supplier_sku: "FORN-1-VM",
+    attributes: { Vermelho: "Vermelho" },
+  });
+
+  assert.ok(
+    validateOlistProduct(product).includes(
+      "variacoes com estruturas de grade diferentes",
+    ),
+  );
+});
+
+test("permite converter o pai antes de enviar as variacoes", () => {
+  const product = validProduct();
+  product.olist_product_id = "900";
+
+  const sent = buildTinyProduct(product, "2", 1, true, 1000, {
+    includeVariations: false,
+  });
+
+  assert.equal(sent.produto.classe_produto, "V");
+  assert.equal(sent.produto.variacoes, undefined);
+});

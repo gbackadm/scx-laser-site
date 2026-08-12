@@ -18,7 +18,8 @@ if (!process.env.DATABASE_URL) {
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 
 try {
-  const [tables, settings, source, variants, integrity] = await Promise.all([
+  const [tables, settings, source, variants, channel, latestRun, integrity, grades] =
+    await Promise.all([
     pool.query(`
       SELECT
         c.relname AS table_name,
@@ -66,6 +67,29 @@ try {
     `),
     pool.query(`
       SELECT
+        (SELECT count(*)::int FROM scx_catalog_product_channel_mappings WHERE channel = 'olist' AND sync_status = 'synced') AS synced_products,
+        (SELECT count(*)::int FROM scx_catalog_product_variant_channel_mappings WHERE channel = 'olist' AND sync_status = 'synced') AS synced_variants,
+        (SELECT count(*)::int FROM scx_catalog_product_channel_mappings WHERE channel = 'olist' AND sync_status = 'failed') AS failed_products
+    `),
+    pool.query(`
+      SELECT
+        id,
+        mode,
+        trigger_source,
+        status,
+        selected_products,
+        eligible_products,
+        blocked_products,
+        result_snapshot,
+        error_message,
+        started_at,
+        finished_at
+      FROM scx_olist_sync_runs
+      ORDER BY created_at DESC
+      LIMIT 1
+    `),
+    pool.query(`
+      SELECT
         count(*) FILTER (
           WHERE btrim(scx_sku) = ''
              OR btrim(supplier_sku) = ''
@@ -96,6 +120,42 @@ try {
         ) AS public_products_without_images
       FROM scx_catalog_product_variants
     `),
+    pool.query(`
+      WITH variant_schemas AS (
+        SELECT
+          variant.product_id,
+          variant.id AS variant_id,
+          count(attribute.key)::int AS level_count,
+          COALESCE(string_agg(lower(btrim(attribute.key)), ',' ORDER BY lower(btrim(attribute.key))), '') AS key_set
+        FROM scx_catalog_product_variants variant
+        LEFT JOIN LATERAL jsonb_each_text(variant.attributes) attribute ON true
+        WHERE variant.is_active
+        GROUP BY variant.product_id, variant.id
+      ), product_schemas AS (
+        SELECT
+          product_id,
+          count(DISTINCT level_count)::int AS distinct_level_counts,
+          count(DISTINCT key_set)::int AS distinct_key_sets,
+          array_agg(DISTINCT level_count ORDER BY level_count) AS level_counts,
+          array_agg(DISTINCT key_set ORDER BY key_set) AS key_sets
+        FROM variant_schemas
+        GROUP BY product_id
+      )
+      SELECT
+        count(*) FILTER (WHERE distinct_level_counts > 1)::int AS products_with_mixed_level_counts,
+        count(*) FILTER (WHERE distinct_key_sets > 1)::int AS products_with_mixed_key_sets,
+        COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'product_id', product_id,
+              'level_counts', level_counts,
+              'key_sets', key_sets
+            )
+          ) FILTER (WHERE distinct_level_counts > 1 OR distinct_key_sets > 1),
+          '[]'::jsonb
+        ) AS samples
+      FROM product_schemas
+    `),
   ]);
 
   console.log(
@@ -106,6 +166,9 @@ try {
         source: source.rows[0] ?? null,
         variants: variants.rows[0] ?? null,
         integrity: integrity.rows[0] ?? null,
+        channel: channel.rows[0] ?? null,
+        latestRun: latestRun.rows[0] ?? null,
+        grades: grades.rows[0] ?? null,
       },
       null,
       2,

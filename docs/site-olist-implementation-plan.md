@@ -231,6 +231,10 @@ Estado atual:
 - O ID do produto pai e os IDs dos filhos retornados pelo Olist ficam salvos.
 - Backfill inicial: 79 produtos, 189 variacoes, 0 registros incompletos e 0
   grades duplicadas.
+- Normalizacao corrigida para usar nomes estaveis de grade (`Cor`, `Capacidade`
+  e equivalentes): 79 elegiveis e 0 estruturas divergentes.
+- Produto ja existente como simples e convertido em duas etapas antes de receber
+  os filhos, sem ultrapassar o limite configurado de chamadas.
 
 ## Rotina automatica Asia Import
 

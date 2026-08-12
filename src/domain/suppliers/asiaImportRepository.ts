@@ -104,6 +104,19 @@ function productImages(product: AsiaImportProduct) {
   ].filter((value): value is string => Boolean(value));
 }
 
+function attributeLabel(value: string) {
+  const normalized = value
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
+}
+
 function variationAttributes(value: unknown, fallback: string) {
   const attributes: Record<string, string> = {};
 
@@ -114,7 +127,11 @@ function variationAttributes(value: unknown, fallback: string) {
       }
 
       const item = entry as Record<string, unknown>;
-      const name = String(item.name ?? item.nome ?? item.slug ?? "").trim();
+      const name = attributeLabel(
+        String(
+          item.attribute ?? item.atributo ?? item.key ?? item.slug ?? item.name ?? item.nome ?? "",
+        ),
+      );
       const attributeValue = String(item.value ?? item.valor ?? "").trim();
 
       if (name && attributeValue) {
@@ -125,7 +142,7 @@ function variationAttributes(value: unknown, fallback: string) {
     for (const [key, rawValue] of Object.entries(value)) {
       if (rawValue && typeof rawValue === "object") {
         const item = rawValue as Record<string, unknown>;
-        const name = String(item.name ?? item.nome ?? key).trim();
+        const name = attributeLabel(key);
         const attributeValue = String(
           item.value ?? item.valor ?? item.label ?? "",
         ).trim();

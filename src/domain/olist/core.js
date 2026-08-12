@@ -227,6 +227,13 @@ function buildTinyVariations(product, isUpdate) {
     });
 }
 
+function variantGradeSchema(variant) {
+  return Object.keys(normalizedVariantGrade(variant.attributes))
+    .map((name) => name.toLocaleLowerCase("pt-BR"))
+    .sort((left, right) => left.localeCompare(right))
+    .join("|");
+}
+
 export function validateOlistProduct(product) {
   const rawPayload = product.raw_payload ?? {};
   const productMeasure = parseProductDimensions(rawPayload);
@@ -277,6 +284,7 @@ export function validateOlistProduct(product) {
         ),
       ),
     );
+    const gradeSchemas = activeVariants.map(variantGradeSchema);
 
     if (activeVariants.length === 0) {
       reasons.push("sem variacao ativa");
@@ -303,12 +311,22 @@ export function validateOlistProduct(product) {
     if (new Set(grades).size !== grades.length) {
       reasons.push("grade de variacao repetida");
     }
+    if (new Set(gradeSchemas).size > 1) {
+      reasons.push("variacoes com estruturas de grade diferentes");
+    }
   }
 
   return reasons;
 }
 
-export function buildTinyProduct(product, origin, sequence, isUpdate, stockMinQuantity) {
+export function buildTinyProduct(
+  product,
+  origin,
+  sequence,
+  isUpdate,
+  stockMinQuantity,
+  options = {},
+) {
   const costInCents = product.cost_amount_in_cents ?? product.price_amount_in_cents;
   const rawPayload = product.raw_payload ?? {};
   const scxSku = product.scx_sku ?? product.sku;
@@ -404,7 +422,7 @@ export function buildTinyProduct(product, origin, sequence, isUpdate, stockMinQu
       imagem_externa: { url },
     })),
     variacoes:
-      tinyVariations.length > 0
+      options.includeVariations !== false && tinyVariations.length > 0
         ? tinyVariations.map(({ variacao }) => ({ variacao }))
         : undefined,
     seo: {
@@ -445,11 +463,21 @@ export function summarizeOlistPlan(products, stockMinQuantity, batchSize = DEFAU
   }, {});
   const createRows = eligibleRows.filter((product) => !product.olist_product_id);
   const updateRows = eligibleRows.filter((product) => product.olist_product_id);
+  const conversionRows = updateRows.filter(
+    (product) =>
+      product.variants?.some((variant) => variant.is_active) &&
+      !product.variants?.some((variant) => variant.olist_variant_id),
+  );
+  const regularUpdateRows = updateRows.filter(
+    (product) => !conversionRows.includes(product),
+  );
   const willBeActive = eligibleRows.filter((product) =>
     productShouldBeActive(product, stockMinQuantity),
   ).length;
   const estimatedApiCalls =
-    Math.ceil(createRows.length / batchSize) + Math.ceil(updateRows.length / batchSize);
+    Math.ceil(createRows.length / batchSize) +
+    Math.ceil(regularUpdateRows.length / batchSize) +
+    Math.ceil(conversionRows.length / batchSize) * 2;
 
   return {
     selectedProducts: products.length,
@@ -461,6 +489,7 @@ export function summarizeOlistPlan(products, stockMinQuantity, batchSize = DEFAU
     willBeInactive: eligibleRows.length - willBeActive,
     creates: createRows.length,
     updates: updateRows.length,
+    classConversions: conversionRows.length,
     estimatedApiCalls,
     eligibleProductsList: eligibleRows,
     blockedProductsList: blockedRows.map((entry) => ({
