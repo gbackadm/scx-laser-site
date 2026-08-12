@@ -147,6 +147,12 @@ export default async function AdminCatalogPage({
               Precos
             </Link>
             <Link
+              href="/admin/olist"
+              className="rounded border border-white/12 px-3 py-2 font-bold text-zinc-300 transition hover:border-laser hover:text-white"
+            >
+              Olist
+            </Link>
+            <Link
               href="/"
               className="rounded border border-white/12 px-3 py-2 font-bold text-zinc-300 transition hover:border-laser hover:text-white"
             >

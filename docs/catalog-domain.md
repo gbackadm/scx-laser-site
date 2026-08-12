@@ -1,5 +1,14 @@
 # Estrutura de dados do catalogo
 
+O plano de execucao atualizado esta em
+[`docs/sistema-scx-prioridades.md`](./sistema-scx-prioridades.md). Ele deve ser
+usado como referencia para priorizar marketplace, Olist, produto canonico e
+normalizacao de fornecedores.
+
+O fluxo operacional de envio em massa ao Olist/Tiny esta em
+[`docs/olist-marketplace-flow.md`](./olist-marketplace-flow.md). Esse documento
+deve orientar a implementacao futura da tela no site.
+
 Esta base ainda nao escolhe banco, ORM, API ou provedor de autenticacao. O
 objetivo e deixar o dominio pronto para receber o banco atual do usuario quando
 ele estiver disponivel.
@@ -67,6 +76,32 @@ sistema.
 | Fotos/URLs | `ProductImageReference.url` |
 | Publicado/oculto | `CatalogProduct.publicationStatus` |
 | Historico de atualizacoes | `AuditLogEntry` |
+
+## Regra de SKU para canais
+
+O SKU publicado em Tiny/Olist, Mercado Livre, Shopee e demais canais deve ser
+sempre o SKU SCX (`CatalogProduct.scx_sku`, com fallback tecnico para
+`CatalogProduct.sku` enquanto houver dados antigos). Codigos vindos da Asia ou
+de outro fornecedor devem ficar apenas na referencia do fornecedor, como
+`SupplierProduct.externalId` no banco e `codigo_pelo_fornecedor` no Tiny/Olist.
+
+Dados estruturais do produto, como NCM, origem, peso, embalagem, medidas,
+estoque, prazo de preparacao e fornecedor, pertencem aos campos proprios da aba
+Dados gerais do Tiny/Olist. Eles nao devem ser duplicados como texto solto na
+descricao.
+
+A aba Ficha tecnica > Atributos deve ser tratada como camada extra de atributos
+para enriquecimento e publicacao em canais como Mercado Livre, Shopee e outros
+marketplaces. Esses atributos podem nascer dos dados da Asia, do SCX ou de regras
+por categoria, mas devem ser sincronizados como atributos de canal, nao como tags.
+
+Na pratica:
+
+| Campo | Valor correto |
+| --- | --- |
+| SKU do produto no canal | SKU SCX, ex.: `SCX-CAN-0006` |
+| Codigo do produto no fornecedor | Codigo Asia, ex.: `CM17725B` |
+| Fornecedor do produto | Mapeamento do fornecedor no canal, ex.: Asia Import |
 
 ## Fonte Asia Import
 

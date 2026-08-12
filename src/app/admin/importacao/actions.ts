@@ -16,6 +16,7 @@ import {
 } from "@/domain/suppliers/asiaImport";
 import {
   createCatalogDraftFromSupplierProduct,
+  updateAsiaAutoSyncSettings,
   supplierProductHasCatalogProduct,
   upsertAsiaSupplierProducts,
 } from "@/domain/suppliers/asiaImportRepository";
@@ -32,6 +33,16 @@ function parsePositiveInteger(value: FormDataEntryValue | null, fallback: number
   return Number.isFinite(numericValue)
     ? Math.max(1, Math.round(numericValue))
     : fallback;
+}
+
+function parseBoolean(value: FormDataEntryValue | null) {
+  return value === "on" || value === "true" || value === "1";
+}
+
+function parseStatusFilter(value: FormDataEntryValue | null) {
+  const status = String(value ?? "all");
+
+  return status === "true" || status === "false" ? status : "all";
 }
 
 function normalizeSearch(value: string) {
@@ -220,6 +231,32 @@ export async function runAsiaImport(formData: FormData) {
 
     redirect("/admin/importacao?erro=sincronizacao");
   }
+}
+
+export async function saveAsiaAutoSyncSettings(formData: FormData) {
+  const session = await requireAdminSession();
+  requireImporterRole(session.role);
+
+  const settings = await updateAsiaAutoSyncSettings({
+    isEnabled: parseBoolean(formData.get("isEnabled")),
+    intervalMinutes: parsePositiveInteger(formData.get("intervalMinutes"), 10),
+    batchSize: parsePositiveInteger(formData.get("batchSize"), 10),
+    statusFilter: parseStatusFilter(formData.get("statusFilter")),
+    actorUserId: session.id,
+  });
+
+  await writeAdminAuditLog({
+    actorUserId: session.id,
+    action: "sync_run_completed",
+    entityType: "sync_run",
+    entityId: randomUUID(),
+    summary: `Configuracao Asia Import salva. Rotina ${
+      settings.isEnabled ? "ativa" : "inativa"
+    }.`,
+  });
+
+  revalidatePath("/admin/importacao");
+  redirect("/admin/importacao?config=1");
 }
 
 export async function clearPendingAsiaImport() {

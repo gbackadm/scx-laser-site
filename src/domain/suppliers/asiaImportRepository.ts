@@ -14,6 +14,56 @@ import {
 const supplierId = "asia-import";
 const supplierName = "Asia Import";
 
+type AsiaAutoSyncSettingsRow = {
+  is_enabled: boolean;
+  interval_minutes: number;
+  batch_size: number;
+  status_filter: "true" | "false" | "all";
+  last_auto_sync_at: Date | string | null;
+  next_auto_sync_after: Date | string | null;
+  updated_at: Date | string;
+};
+
+export type AsiaAutoSyncSettings = {
+  isEnabled: boolean;
+  intervalMinutes: number;
+  batchSize: number;
+  statusFilter: "true" | "false" | "all";
+  lastAutoSyncAt?: string;
+  nextAutoSyncAfter?: string;
+  updatedAt: string;
+};
+
+export type AsiaAutoSyncSettingsUpdate = {
+  isEnabled: boolean;
+  intervalMinutes: number;
+  batchSize: number;
+  statusFilter: "true" | "false" | "all";
+  actorUserId: string;
+};
+
+function toIso(value: Date | string | null | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function mapAsiaAutoSyncSettings(
+  row: AsiaAutoSyncSettingsRow,
+): AsiaAutoSyncSettings {
+  return {
+    isEnabled: row.is_enabled,
+    intervalMinutes: row.interval_minutes,
+    batchSize: row.batch_size,
+    statusFilter: row.status_filter,
+    lastAutoSyncAt: toIso(row.last_auto_sync_at),
+    nextAutoSyncAfter: toIso(row.next_auto_sync_after),
+    updatedAt: toIso(row.updated_at) ?? new Date().toISOString(),
+  };
+}
+
 function productExternalId(product: AsiaImportProduct) {
   return (
     product.referencia?.trim() ||
@@ -251,6 +301,66 @@ export async function upsertAsiaSupplierProducts(products: AsiaImportProduct[]) 
   return importedCount;
 }
 
+export async function getAsiaAutoSyncSettings() {
+  const { rows } = await getDatabasePool().query<AsiaAutoSyncSettingsRow>(
+    `
+      INSERT INTO scx_supplier_auto_sync_settings (supplier_id)
+      VALUES ($1)
+      ON CONFLICT (supplier_id) DO UPDATE SET supplier_id = EXCLUDED.supplier_id
+      RETURNING *
+    `,
+    [supplierId],
+  );
+
+  return mapAsiaAutoSyncSettings(rows[0]);
+}
+
+export async function updateAsiaAutoSyncSettings(
+  input: AsiaAutoSyncSettingsUpdate,
+) {
+  const intervalMinutes = Math.max(10, Math.round(input.intervalMinutes));
+  const batchSize = Math.min(100, Math.max(1, Math.round(input.batchSize)));
+  const nextAutoSyncAfter = input.isEnabled
+    ? new Date(Date.now() + intervalMinutes * 60_000)
+    : null;
+  const { rows } = await getDatabasePool().query<AsiaAutoSyncSettingsRow>(
+    `
+      INSERT INTO scx_supplier_auto_sync_settings (
+        supplier_id,
+        is_enabled,
+        interval_minutes,
+        batch_size,
+        status_filter,
+        next_auto_sync_after,
+        updated_by,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+      ON CONFLICT (supplier_id)
+      DO UPDATE SET
+        is_enabled = EXCLUDED.is_enabled,
+        interval_minutes = EXCLUDED.interval_minutes,
+        batch_size = EXCLUDED.batch_size,
+        status_filter = EXCLUDED.status_filter,
+        next_auto_sync_after = EXCLUDED.next_auto_sync_after,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = now()
+      RETURNING *
+    `,
+    [
+      supplierId,
+      input.isEnabled,
+      intervalMinutes,
+      batchSize,
+      input.statusFilter,
+      nextAutoSyncAfter,
+      input.actorUserId,
+    ],
+  );
+
+  return mapAsiaAutoSyncSettings(rows[0]);
+}
+
 export async function listAsiaSupplierProductsForReview(limit = 20) {
   const result = await getDatabasePool().query(
     `
@@ -479,7 +589,10 @@ export async function markSupplierProductPendingIfUnmapped(
   );
 }
 
-export async function syncCatalogProductFromAsiaImport(catalogProductId: string) {
+export async function syncCatalogProductFromAsiaImport(
+  catalogProductId: string,
+  status: "true" | "false" | "all" = "all",
+) {
   const pool = getDatabasePool();
   const productResult = await pool.query(
     `
@@ -503,7 +616,7 @@ export async function syncCatalogProductFromAsiaImport(catalogProductId: string)
     pagina: 1,
     porPagina: 10,
     referencia: externalId,
-    status: "all",
+    status,
   });
   const supplierProduct =
     result.produtos?.find((product) => productMatchesExternalId(product, externalId)) ??
@@ -553,4 +666,133 @@ export async function syncAllCatalogProductsFromAsiaImport() {
     syncedCount,
     errorCount: errors.length,
   };
+}
+
+export async function syncCatalogProductsFromAsiaImportBatch(
+  limit = 10,
+  status: "true" | "false" | "all" = "all",
+) {
+  const pool = getDatabasePool();
+  const safeLimit = Math.min(100, Math.max(1, Math.round(limit)));
+  const linkedProductsResult = await pool.query<{ id: string }>(
+    `
+      SELECT product.id
+      FROM scx_catalog_products product
+      INNER JOIN scx_catalog_supplier_products sp
+        ON sp.id = product.supplier_product_id
+      WHERE sp.supplier_id = $1
+      ORDER BY sp.last_imported_at ASC, product.updated_at ASC, product.title ASC
+      LIMIT $2
+    `,
+    [supplierId, safeLimit],
+  );
+  let syncedCount = 0;
+  const errors: string[] = [];
+
+  for (const row of linkedProductsResult.rows) {
+    try {
+      await syncCatalogProductFromAsiaImport(row.id, status);
+      syncedCount += 1;
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "Erro desconhecido.");
+    }
+  }
+
+  return {
+    totalCount: linkedProductsResult.rowCount ?? linkedProductsResult.rows.length,
+    syncedCount,
+    errorCount: errors.length,
+    errors,
+  };
+}
+
+export async function runScheduledAsiaImportSyncIfDue() {
+  const settings = await getAsiaAutoSyncSettings();
+  const now = new Date();
+  const nextAutoSyncAfter = settings.nextAutoSyncAfter
+    ? new Date(settings.nextAutoSyncAfter)
+    : null;
+
+  if (!settings.isEnabled) {
+    return { skipped: true, reason: "Rotina Asia Import desativada." };
+  }
+
+  if (nextAutoSyncAfter && nextAutoSyncAfter > now) {
+    return { skipped: true, reason: "Ainda nao chegou o horario da proxima rotina." };
+  }
+
+  const syncRunId = randomUUID();
+
+  await getDatabasePool().query(
+    `
+      INSERT INTO scx_catalog_sync_runs (
+        id,
+        source,
+        status,
+        imported_count,
+        mapped_count
+      )
+      VALUES ($1, 'supplier_import', 'running', 0, 0)
+    `,
+    [syncRunId],
+  );
+
+  try {
+    const result = await syncCatalogProductsFromAsiaImportBatch(
+      settings.batchSize,
+      settings.statusFilter,
+    );
+    const nextRun = new Date(now.getTime() + settings.intervalMinutes * 60_000);
+
+    await getDatabasePool().query(
+      `
+        UPDATE scx_catalog_sync_runs
+        SET status = $2,
+          finished_at = now(),
+          imported_count = $3,
+          mapped_count = $3,
+          error_message = $4
+        WHERE id = $1
+      `,
+      [
+        syncRunId,
+        result.errorCount > 0 ? "failed" : "completed",
+        result.syncedCount,
+        result.errors.slice(0, 5).join(" | ") || null,
+      ],
+    );
+
+    await getDatabasePool().query(
+      `
+        UPDATE scx_supplier_auto_sync_settings
+        SET last_auto_sync_at = $2,
+          next_auto_sync_after = $3,
+          updated_at = now()
+        WHERE supplier_id = $1
+      `,
+      [supplierId, now, nextRun],
+    );
+
+    return {
+      skipped: false,
+      syncRunId,
+      ...result,
+      nextAutoSyncAfter: nextRun.toISOString(),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro desconhecido.";
+
+    await getDatabasePool().query(
+      `
+        UPDATE scx_catalog_sync_runs
+        SET status = 'failed',
+          finished_at = now(),
+          error_message = $2
+        WHERE id = $1
+      `,
+      [syncRunId, message],
+    );
+
+    throw error;
+  }
 }

@@ -1,0 +1,39 @@
+import { NextResponse } from "next/server";
+
+import { runScheduledAsiaImportSyncIfDue } from "@/domain/suppliers/asiaImportRepository";
+
+function hasCronAccess(request: Request) {
+  const configuredSecret =
+    process.env.ASIA_IMPORT_CRON_SECRET ?? process.env.OLIST_CRON_SECRET;
+
+  if (!configuredSecret) {
+    return false;
+  }
+
+  return request.headers.get("x-asia-cron-secret") === configuredSecret;
+}
+
+export async function POST(request: Request) {
+  if (!hasCronAccess(request)) {
+    return NextResponse.json(
+      { ok: false, message: "Rotina Asia Import nao autorizada." },
+      { status: 401 },
+    );
+  }
+
+  try {
+    const result = await runScheduledAsiaImportSyncIfDue();
+
+    return NextResponse.json({
+      ok: true,
+      ...result,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message || error.name
+        : "Nao foi possivel executar a rotina Asia Import.";
+
+    return NextResponse.json({ ok: false, message }, { status: 500 });
+  }
+}

@@ -6,9 +6,16 @@ import { ImportProductsTable } from "@/components/admin/ImportProductsTable";
 import { requireAdminSession } from "@/domain/auth/session";
 import { roleCan } from "@/domain/catalog/permissions";
 import { getAsiaImportConfigStatus } from "@/domain/suppliers/asiaImport";
-import { listAsiaSupplierProductsForReview } from "@/domain/suppliers/asiaImportRepository";
+import {
+  getAsiaAutoSyncSettings,
+  listAsiaSupplierProductsForReview,
+} from "@/domain/suppliers/asiaImportRepository";
 
-import { clearPendingAsiaImport, runAsiaImport } from "./actions";
+import {
+  clearPendingAsiaImport,
+  runAsiaImport,
+  saveAsiaAutoSyncSettings,
+} from "./actions";
 
 export const metadata = {
   title: "Admin SCX Laser | Importacao Asia",
@@ -23,6 +30,7 @@ type ImportPageProps = {
     rascunho?: string;
     limpo?: string;
     qtd?: string;
+    config?: string;
   }>;
 };
 
@@ -35,9 +43,10 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
   const canEditCatalog = roleCan(session.role, "catalog:edit");
   const config = getAsiaImportConfigStatus();
   const listLimit = Math.min(Number(params?.qtd ?? 50), 100);
-  const supplierProducts = await listAsiaSupplierProductsForReview(
-    Number.isFinite(listLimit) ? listLimit : 50,
-  );
+  const [supplierProducts, autoSyncSettings] = await Promise.all([
+    listAsiaSupplierProductsForReview(Number.isFinite(listLimit) ? listLimit : 50),
+    getAsiaAutoSyncSettings(),
+  ]);
 
   const message =
     params?.erro === "credenciais"
@@ -52,7 +61,9 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
               ? "Rascunho criado no catalogo. Ele permanece nao publicado."
               : params?.limpo
                 ? `Importacao pendente limpa: ${params.limpo} produto(s) removido(s).`
-                : null;
+                : params?.config
+                  ? "Configuracao de rotina Asia Import salva."
+                  : null;
 
   return (
     <main className="min-h-screen bg-[#050606] text-white">
@@ -230,6 +241,85 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
                   Limpar pendentes
                 </button>
               </div>
+            </div>
+          </form>
+        </section>
+
+        <section className="rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
+            Rotina automatica
+          </p>
+          <h2 className="mt-2 text-2xl font-black text-white">
+            Atualizacao da Asia Import
+          </h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-300">
+            A rotina atualiza os produtos ja vinculados ao catalogo, trazendo
+            estoque, custo e status conforme a regra de estoque minimo do site.
+            Ela roda em lotes para nao concentrar chamadas na API.
+          </p>
+
+          <form
+            action={saveAsiaAutoSyncSettings}
+            className="mt-5 grid gap-4 lg:grid-cols-[180px_180px_180px_1fr]"
+          >
+            <label className="flex min-h-11 items-center gap-3 rounded border border-white/10 bg-black/25 px-3 text-sm font-bold text-zinc-200">
+              <input
+                name="isEnabled"
+                type="checkbox"
+                defaultChecked={autoSyncSettings.isEnabled}
+                className="h-4 w-4 accent-red-600"
+              />
+              Rotina ativa
+            </label>
+            <label className="grid gap-2 text-sm font-bold text-zinc-200">
+              Intervalo
+              <select
+                name="intervalMinutes"
+                defaultValue={autoSyncSettings.intervalMinutes}
+                className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser"
+              >
+                <option value={10}>A cada 10 min</option>
+                <option value={30}>A cada 30 min</option>
+                <option value={60}>A cada hora</option>
+                <option value={360}>A cada 6 horas</option>
+              </select>
+            </label>
+            <label className="grid gap-2 text-sm font-bold text-zinc-200">
+              Lote
+              <input
+                name="batchSize"
+                type="number"
+                min={1}
+                max={100}
+                defaultValue={autoSyncSettings.batchSize}
+                className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser"
+              />
+            </label>
+            <label className="grid gap-2 text-sm font-bold text-zinc-200">
+              Status na Asia
+              <select
+                name="statusFilter"
+                defaultValue={autoSyncSettings.statusFilter}
+                className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser"
+              >
+                <option value="all">Todos</option>
+                <option value="true">Publicados na Asia</option>
+                <option value="false">Nao publicados na Asia</option>
+              </select>
+            </label>
+
+            <div className="lg:col-span-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">
+                Proxima rotina:{" "}
+                {autoSyncSettings.nextAutoSyncAfter ?? "sem agendamento"}
+              </div>
+              <button
+                type="submit"
+                disabled={!canImport}
+                className="inline-flex min-h-11 items-center justify-center rounded border border-red-300/45 bg-[linear-gradient(180deg,#ed1b23_0%,#b80f16_100%)] px-5 text-sm font-black uppercase text-white shadow-[0_0_24px_rgba(225,18,27,0.18)] disabled:border-white/12 disabled:bg-white/[0.03] disabled:text-zinc-500"
+              >
+                Salvar rotina
+              </button>
             </div>
           </form>
         </section>
