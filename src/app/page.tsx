@@ -7,15 +7,19 @@ import { Footer } from "@/components/Footer";
 import { Gallery } from "@/components/Gallery";
 import { HowItWorks } from "@/components/HowItWorks";
 import { Services } from "@/components/Services";
+import { getCurrentAdminSession } from "@/domain/auth/session";
 import { getSiteSettings, siteWhatsappUrl } from "@/domain/site/settings";
 
 export default async function Home() {
-  const siteSettings = await getSiteSettings();
+  const [siteSettings, adminSession] = await Promise.all([
+    getSiteSettings(),
+    getCurrentAdminSession(),
+  ]);
   const whatsappUrl = siteWhatsappUrl(siteSettings);
 
   return (
     <>
-      <Header whatsappUrl={whatsappUrl} />
+      <Header whatsappUrl={whatsappUrl} showAdminAccess={Boolean(adminSession)} />
       <main>
         <Hero whatsappUrl={whatsappUrl} />
         <Services />

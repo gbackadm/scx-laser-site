@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import {
   ArrowLeft,
+  Gauge,
   MessageCircle,
   PackageCheck,
   ShoppingBag,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { getCatalogAccess } from "@/domain/catalog/access";
+import { getCurrentAdminSession } from "@/domain/auth/session";
 import { PublicProductGallery } from "@/components/PublicProductGallery";
 import { toPublicCatalogProducts } from "@/domain/catalog/publicProducts";
 import type { PublicCatalogPriceTier } from "@/domain/catalog/publicTypes";
@@ -90,7 +92,10 @@ function PriceTierList({
 export default async function PublicProductPage({ params }: PublicProductPageProps) {
   const { id } = await params;
   const catalogAccess = getCatalogAccess();
-  const siteSettings = await getSiteSettings();
+  const [siteSettings, adminSession] = await Promise.all([
+    getSiteSettings(),
+    getCurrentAdminSession(),
+  ]);
   let products: CatalogProduct[] = [];
   let categories: Category[] = [];
   let pricingRule = defaultPricingRule;
@@ -146,13 +151,24 @@ export default async function PublicProductPage({ params }: PublicProductPagePro
               Catalogo
             </span>
           </Link>
-          <Link
-            href="/catalogo"
-            className="inline-flex w-fit items-center gap-2 rounded border border-white/12 px-3 py-2 text-sm font-bold text-zinc-300 transition hover:border-laser hover:text-white"
-          >
-            <ArrowLeft size={16} />
-            Voltar
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            {adminSession ? (
+              <Link
+                href="/admin"
+                className="inline-flex w-fit items-center gap-2 rounded border border-white/12 px-3 py-2 text-sm font-bold text-zinc-300 transition hover:border-laser hover:text-white"
+              >
+                <Gauge size={16} />
+                Painel
+              </Link>
+            ) : null}
+            <Link
+              href="/catalogo"
+              className="inline-flex w-fit items-center gap-2 rounded border border-white/12 px-3 py-2 text-sm font-bold text-zinc-300 transition hover:border-laser hover:text-white"
+            >
+              <ArrowLeft size={16} />
+              Voltar
+            </Link>
+          </div>
         </div>
       </header>
 

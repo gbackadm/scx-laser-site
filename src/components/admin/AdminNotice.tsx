@@ -1,20 +1,13 @@
-import { ShieldAlert } from "lucide-react";
+import { MonitorDot } from "lucide-react";
 
 export function AdminNotice() {
+  if (process.env.NODE_ENV === "production") return null;
+
   return (
-    <div className="rounded-md border border-amber-300/30 bg-amber-300/10 p-4 text-sm leading-6 text-amber-50">
-      <div className="flex gap-3">
-        <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-200" />
-        <div>
-          <p className="font-bold">Base administrativa local</p>
-          <p className="mt-1 text-amber-100/90">
-            Esta area nao autentica usuarios ainda. Sem DATABASE_URL, o painel usa
-            dados demonstrativos; com DATABASE_URL, le o PostgreSQL local. Um
-            provedor real de autenticacao ainda e necessario antes de uso em
-            producao.
-          </p>
-        </div>
-      </div>
+    <div className="flex items-center gap-3 border-b border-amber-300/20 pb-3 text-xs font-bold text-amber-100">
+      <MonitorDot className="h-4 w-4 shrink-0 text-amber-300" />
+      <span>Ambiente local</span>
+      <span className="text-zinc-500">Dados conectados ao banco configurado</span>
     </div>
   );
 }

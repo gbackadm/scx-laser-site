@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { headers } from "next/headers";
+import { Gauge } from "lucide-react";
 
 import { PublicCatalogBrowser } from "@/components/PublicCatalogBrowser";
+import { getCurrentAdminSession } from "@/domain/auth/session";
 import { getCatalogAccess } from "@/domain/catalog/access";
 import { toPublicCatalogProducts } from "@/domain/catalog/publicProducts";
 import type { CatalogProduct, Category } from "@/domain/catalog/types";
@@ -23,7 +25,10 @@ export const dynamic = "force-dynamic";
 
 export default async function PublicCatalogPage() {
   const catalogAccess = getCatalogAccess();
-  const siteSettings = await getSiteSettings();
+  const [siteSettings, adminSession] = await Promise.all([
+    getSiteSettings(),
+    getCurrentAdminSession(),
+  ]);
   const requestHeaders = await headers();
   let products: CatalogProduct[] = [];
   let categories: Category[] = [];
@@ -74,6 +79,15 @@ export default async function PublicCatalogPage() {
             </span>
           </Link>
           <nav className="flex flex-wrap gap-3 text-sm">
+            {adminSession ? (
+              <Link
+                href="/admin"
+                className="inline-flex items-center gap-2 rounded border border-white/12 px-3 py-2 font-bold text-zinc-300 transition hover:border-laser hover:text-white"
+              >
+                <Gauge size={16} />
+                Painel
+              </Link>
+            ) : null}
             <Link
               href="/"
               className="rounded border border-white/12 px-3 py-2 font-bold text-zinc-300 transition hover:border-laser hover:text-white"

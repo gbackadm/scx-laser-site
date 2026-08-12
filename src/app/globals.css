@@ -35,3 +35,7 @@ a {
   background: rgba(225, 18, 27, 0.75);
   color: white;
 }
+
+.admin-content > main > header:first-child {
+  display: none;
+}

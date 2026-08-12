@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, MessageCircle, X } from "lucide-react";
+import { Gauge, Menu, MessageCircle, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -8,9 +8,13 @@ import { headerCta, navigationLinks } from "@/data/site";
 
 type HeaderProps = {
   whatsappUrl?: string;
+  showAdminAccess?: boolean;
 };
 
-export function Header({ whatsappUrl = headerCta.href }: HeaderProps) {
+export function Header({
+  whatsappUrl = headerCta.href,
+  showAdminAccess = false,
+}: HeaderProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -48,7 +52,17 @@ export function Header({ whatsappUrl = headerCta.href }: HeaderProps) {
           ))}
         </nav>
 
-        <div className="hidden justify-self-end lg:block">
+        <div className="hidden items-center justify-self-end gap-2 lg:flex">
+          {showAdminAccess ? (
+            <Link
+              href="/admin"
+              title="Abrir administracao"
+              aria-label="Abrir administracao"
+              className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/15 text-zinc-200 transition hover:border-laser hover:text-white"
+            >
+              <Gauge size={18} />
+            </Link>
+          ) : null}
           <Link
             href={whatsappUrl}
             className="inline-flex h-10 items-center gap-2 rounded px-4 text-[0.66rem] font-black uppercase tracking-normal text-white shadow-laser transition hover:bg-red-600"
@@ -73,6 +87,16 @@ export function Header({ whatsappUrl = headerCta.href }: HeaderProps) {
       {isOpen ? (
         <div className="max-h-[calc(100vh-4rem)] overflow-y-auto border-t border-white/10 bg-black/[0.96] px-4 py-4 shadow-2xl sm:px-5 sm:py-5 lg:hidden">
           <nav className="mx-auto grid max-w-7xl gap-1" aria-label="Principal mobile">
+            {showAdminAccess ? (
+              <Link
+                href="/admin"
+                className="inline-flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-bold text-zinc-100 transition hover:bg-white/5 hover:text-laser sm:py-3"
+                onClick={() => setIsOpen(false)}
+              >
+                <Gauge size={18} />
+                Administracao
+              </Link>
+            ) : null}
             {navigationLinks.map((link) => (
               <Link
                 key={link.href}
