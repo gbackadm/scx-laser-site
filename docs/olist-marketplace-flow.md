@@ -231,6 +231,8 @@ A tela do admin possui:
 - acao para reprocessar somente falhas.
 
 O envio manual e a rotina automatica passam pelo mesmo validador. A rotina roda
-a cada hora, envia no maximo cinco lotes de vinte registros por execucao e
-prioriza produtos nunca sincronizados ou com sincronizacao mais antiga. Todo
-resultado fica registrado em `scx_olist_sync_runs`.
+a cada hora, processa um lote logico de ate vinte registros por execucao e
+prioriza produtos nunca sincronizados ou com sincronizacao mais antiga.
+Migracoes podem usar duas chamadas dentro desse lote. Essa divisao evita o
+limite de tempo da funcao Netlify. Todo resultado fica registrado em
+`scx_olist_sync_runs`.

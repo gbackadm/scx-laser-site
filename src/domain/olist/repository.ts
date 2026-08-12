@@ -911,6 +911,15 @@ export async function executeOlistSync({
     throw new Error("Conector Olist desativado.");
   }
 
+  await getDatabasePool().query(`
+    UPDATE scx_olist_sync_runs
+    SET status = 'failed',
+      error_message = COALESCE(error_message, 'Execucao interrompida pelo limite de tempo.'),
+      finished_at = COALESCE(finished_at, now())
+    WHERE status = 'running'
+      AND started_at < now() - interval '2 minutes'
+  `);
+
   if (
     triggerSource === "admin" &&
     settings.requireManualSimulationBeforeSend
@@ -992,9 +1001,12 @@ export async function executeOlistSync({
     plan.eligibleProductsList.filter(needsOlistClassConversion),
     settings.batchSize,
   ).map((batch) => ({ batch, isUpdate: true, requiresClassConversion: true, apiCalls: 2 }));
-  const allBatches = [...createBatches, ...regularUpdateBatches, ...conversionBatches];
+  const allBatches = [...createBatches, ...conversionBatches, ...regularUpdateBatches];
   let selectedApiCalls = 0;
   const selectedBatches = allBatches.filter((entry) => {
+    if (selectedApiCalls > 0) {
+      return false;
+    }
     if (selectedApiCalls + entry.apiCalls > settings.batchCallsPerMinute) {
       return false;
     }
