@@ -23,6 +23,10 @@ type AdminCatalogPageProps = {
   searchParams?: Promise<{
     erro?: string;
     excluido?: string;
+    criado?: string;
+    olist_ok?: string;
+    olist_pendente?: string;
+    olist_erro?: string;
     status?: string;
   }>;
 };
@@ -52,6 +56,22 @@ function catalogFeedbackMessage(
 
   if (params?.excluido) {
     return "Produto excluido do catalogo administrativo.";
+  }
+
+  if (params?.criado && params?.olist_ok) {
+    return "Produto criado no catalogo e enviado ao Olist.";
+  }
+
+  if (params?.criado && params?.olist_erro) {
+    return "Produto criado no catalogo, mas o envio ao Olist falhou. Revise em Olist.";
+  }
+
+  if (params?.criado && params?.olist_pendente) {
+    return "Produto criado no catalogo. Olist ficou pendente pela configuracao ou validacao.";
+  }
+
+  if (params?.criado) {
+    return "Produto criado no catalogo administrativo.";
   }
 
   return null;

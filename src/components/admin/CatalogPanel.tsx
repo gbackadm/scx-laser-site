@@ -1,6 +1,6 @@
 "use client";
 
-import { Edit3, Search, SlidersHorizontal } from "lucide-react";
+import { Edit3, Plus, Search, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { CatalogDeleteButton } from "@/components/admin/CatalogDeleteButton";
@@ -309,15 +309,18 @@ export function CatalogPanel({
                 }
               }}
             />
-            <button
-              type="button"
-              disabled
-              className="inline-flex min-h-9 items-center justify-center gap-2 rounded border border-white/12 bg-white/[0.03] px-4 text-sm font-bold text-zinc-400"
-              title="Disponivel apos autenticar e integrar persistencia"
+            <a
+              href="/admin/catalogo/novo"
+              className={`inline-flex min-h-9 items-center justify-center gap-2 rounded border border-white/12 px-4 text-sm font-bold transition ${
+                canEdit
+                  ? "text-zinc-300 hover:border-laser hover:text-white"
+                  : "pointer-events-none bg-white/[0.03] text-zinc-500"
+              }`}
+              title={canEdit ? "Criar produto manual" : "Sem permissao para criar"}
             >
-              <Edit3 size={17} />
+              <Plus size={17} />
               Novo produto
-            </button>
+            </a>
           </div>
         </div>
 

@@ -73,6 +73,26 @@ export type CatalogProductUpdate = {
   imageUrls: string[];
 };
 
+export type ManualCatalogProductCreate = {
+  scxSku: string;
+  supplierCode: string;
+  supplierName: string;
+  olistSupplierId: string;
+  title: string;
+  description: string;
+  categoryName: string;
+  priceAmountInCents: number;
+  costAmountInCents: number;
+  stockQuantity: number;
+  publicationStatus: CatalogPublicationStatus;
+  ncm: string;
+  weightKg: string;
+  heightCm: string;
+  widthCm: string;
+  lengthCm: string;
+  imageUrls: string[];
+};
+
 function slugify(value: string) {
   return value
     .trim()
@@ -81,6 +101,14 @@ function slugify(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function identifier(value: string) {
+  return (
+    slugify(value)
+      .replace(/-/g, "_")
+      .replace(/[^a-z0-9_]/g, "") || "produto"
+  );
 }
 
 function mapCategory(row: CategoryRow): Category {
@@ -347,6 +375,192 @@ export async function updateCatalogProductForAdmin(input: CatalogProductUpdate) 
     await pool.query("ROLLBACK");
     throw error;
   }
+}
+
+export async function createManualCatalogProductForAdmin(
+  input: ManualCatalogProductCreate,
+) {
+  const pool = getDatabasePool();
+  const scxSku = input.scxSku.trim().toUpperCase();
+  const supplierCode = input.supplierCode.trim();
+  const supplierName = input.supplierName.trim();
+  const supplierId = `manual-${identifier(supplierName)}`;
+  const supplierProductId = `${supplierId}-${identifier(supplierCode)}`;
+  const catalogProductId = `catalog-${identifier(scxSku)}`;
+  const categoryId = await ensureCatalogCategory(input.categoryName);
+  const imageUrls = Array.from(
+    new Set(input.imageUrls.map((url) => url.trim()).filter(Boolean)),
+  );
+  const dimensionLabel = `${input.heightCm} x ${input.widthCm} x ${input.lengthCm} cm`;
+  const rawPayload = {
+    referencia: supplierCode,
+    nome: input.title.trim(),
+    descricao: input.description.trim(),
+    preco: (input.costAmountInCents / 100).toFixed(2),
+    ncm: input.ncm.trim(),
+    altura: input.heightCm,
+    largura: input.widthCm,
+    comprimento: input.lengthCm,
+    peso: input.weightKg,
+    categorias: {
+      principal: input.categoryName.trim(),
+    },
+    propriedades: {
+      ncm: input.ncm.trim(),
+      "peso-do-produto": input.weightKg,
+      "dimensao-do-produto": dimensionLabel,
+    },
+    propriedades2: [
+      { slug: "ncm", value: input.ncm.trim() },
+      { slug: "peso-do-produto", value: input.weightKg },
+      { slug: "dimensao-do-produto", value: dimensionLabel },
+    ],
+  };
+
+  const existingResult = await pool.query<{ id: string }>(
+    `
+      SELECT id
+      FROM scx_catalog_products
+      WHERE sku = $1
+        OR scx_sku = $2
+        OR id = $3
+      LIMIT 1
+    `,
+    [supplierCode, scxSku, catalogProductId],
+  );
+
+  if (existingResult.rows[0]) {
+    throw new Error("Ja existe produto com este SKU SCX ou codigo de fornecedor.");
+  }
+
+  await pool.query("BEGIN");
+
+  try {
+    await pool.query(
+      `
+        INSERT INTO scx_catalog_supplier_products (
+          id,
+          supplier_id,
+          supplier_name,
+          external_id,
+          raw_name,
+          raw_description,
+          raw_category,
+          raw_image_urls,
+          cost_amount_in_cents,
+          suggested_price_amount_in_cents,
+          stock_available,
+          last_imported_at,
+          import_status,
+          raw_payload
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), 'mapped', $12::jsonb)
+      `,
+      [
+        supplierProductId,
+        supplierId,
+        supplierName,
+        supplierCode,
+        input.title.trim(),
+        input.description.trim() || null,
+        input.categoryName.trim(),
+        imageUrls,
+        input.costAmountInCents,
+        input.priceAmountInCents,
+        input.stockQuantity,
+        JSON.stringify(rawPayload),
+      ],
+    );
+
+    await pool.query(
+      `
+        INSERT INTO scx_catalog_supplier_channel_mappings (
+          id,
+          supplier_id,
+          supplier_name,
+          channel,
+          external_id,
+          external_code,
+          external_name,
+          last_synced_at
+        )
+        VALUES ($1, $2, $3, 'olist', $4, $5, $3, now())
+        ON CONFLICT (supplier_id, channel)
+        DO UPDATE SET
+          supplier_name = EXCLUDED.supplier_name,
+          external_id = EXCLUDED.external_id,
+          external_code = EXCLUDED.external_code,
+          external_name = EXCLUDED.external_name,
+          last_synced_at = now(),
+          updated_at = now()
+      `,
+      [
+        `supplier-channel-${supplierId}-olist`,
+        supplierId,
+        supplierName,
+        input.olistSupplierId.trim(),
+        supplierCode,
+      ],
+    );
+
+    await pool.query(
+      `
+        INSERT INTO scx_catalog_products (
+          id,
+          sku,
+          scx_sku,
+          title,
+          description,
+          category_id,
+          supplier_product_id,
+          publication_status,
+          price_amount_in_cents,
+          cost_amount_in_cents,
+          stock_policy,
+          stock_quantity,
+          tags
+        )
+        VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10, 'tracked', $11, '{}')
+      `,
+      [
+        catalogProductId,
+        supplierCode,
+        scxSku,
+        input.title.trim(),
+        input.description.trim(),
+        categoryId,
+        supplierProductId,
+        input.publicationStatus,
+        input.priceAmountInCents,
+        input.costAmountInCents,
+        input.stockQuantity,
+      ],
+    );
+
+    for (const [index, url] of imageUrls.entries()) {
+      await pool.query(
+        `
+          INSERT INTO scx_catalog_product_images (
+            id,
+            product_id,
+            url,
+            alt_text,
+            source,
+            sort_order
+          )
+          VALUES ($1, $2, $3, $4, 'curated', $5)
+        `,
+        [randomUUID(), catalogProductId, url, input.title.trim(), index],
+      );
+    }
+
+    await pool.query("COMMIT");
+  } catch (error) {
+    await pool.query("ROLLBACK");
+    throw error;
+  }
+
+  return catalogProductId;
 }
 
 export async function setCatalogPublicationStatus(

@@ -4,9 +4,11 @@ import { randomUUID } from "node:crypto";
 
 import { getDatabasePool } from "@/domain/catalog/db";
 import {
+  buildTinyProduct,
   DEFAULT_BATCH_SIZE,
   DEFAULT_STOCK_MIN_QUANTITY,
   summarizeOlistPlan,
+  validateOlistProduct,
   type OlistPlanSummary,
   type OlistSyncProduct,
 } from "@/domain/olist/core";
@@ -264,6 +266,73 @@ export async function listProductsForOlistSync(limit?: number) {
   return rows;
 }
 
+export async function getProductForOlistSync(productId: string) {
+  const { rows } = await getDatabasePool().query<OlistSyncProduct>(
+    `
+      SELECT
+        p.id,
+        p.sku,
+        p.scx_sku,
+        p.title,
+        p.description,
+        p.publication_status,
+        p.price_amount_in_cents,
+        p.cost_amount_in_cents,
+        p.stock_quantity,
+        c.name AS category,
+        sp.supplier_name,
+        sp.supplier_id,
+        sp.external_id,
+        sp.raw_payload,
+        scm.external_id AS olist_supplier_id,
+        pcm.external_id AS olist_product_id,
+        coalesce(images.items, '[]'::json) AS images,
+        coalesce(components.items, '[]'::json) AS components,
+        coalesce(production_steps.items, '[]'::json) AS production_steps
+      FROM scx_catalog_products p
+      LEFT JOIN scx_catalog_categories c ON c.id = p.category_id
+      LEFT JOIN scx_catalog_supplier_products sp ON sp.id = p.supplier_product_id
+      LEFT JOIN scx_catalog_supplier_channel_mappings scm
+        ON scm.supplier_id = sp.supplier_id
+       AND scm.channel = 'olist'
+      LEFT JOIN scx_catalog_product_channel_mappings pcm
+        ON pcm.product_id = p.id
+       AND pcm.channel = 'olist'
+      LEFT JOIN LATERAL (
+        SELECT json_agg(
+          json_build_object('url', i.url, 'sort_order', i.sort_order)
+          ORDER BY i.sort_order ASC
+        ) AS items
+        FROM scx_catalog_product_images i
+        WHERE i.product_id = p.id
+      ) images ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(
+          json_build_object(
+            'component_sku', pc.component_sku,
+            'component_name', pc.component_name,
+            'quantity', pc.quantity,
+            'sort_order', pc.sort_order
+          )
+          ORDER BY pc.sort_order ASC
+        ) AS items
+        FROM scx_catalog_product_components pc
+        WHERE pc.product_id = p.id
+      ) components ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(ps.name ORDER BY ps.sort_order ASC) AS items
+        FROM scx_catalog_product_production_steps ps
+        WHERE ps.product_id = p.id
+      ) production_steps ON true
+      WHERE p.id = $1
+      LIMIT 1
+    `,
+    [productId],
+  );
+
+  return rows[0] ?? null;
+}
+
 export function toAdminOlistSimulation(plan: OlistPlanSummary): AdminOlistSimulation {
   return {
     selectedProducts: plan.selectedProducts,
@@ -514,4 +583,141 @@ export async function runScheduledOlistSyncIfDue() {
   }
 
   return { skipped: false, simulation };
+}
+
+async function postTinyApi(path: string, params: Record<string, string>) {
+  const response = await fetch(`https://api.tiny.com.br/api2/${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams(params),
+  });
+  const text = await response.text();
+
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return { raw: text };
+  }
+}
+
+async function upsertProductChannelMapping(
+  product: OlistSyncProduct,
+  sent: { scxSku: string; supplierSku: string; productId: string },
+  apiResult: Record<string, unknown>,
+) {
+  const registros = (apiResult?.retorno as { registros?: unknown[] } | undefined)
+    ?.registros;
+  const registro = (
+    Array.isArray(registros) ? registros[0] : undefined
+  ) as
+    | {
+        registro?: {
+          status?: string;
+          id?: string | number;
+        };
+      }
+    | undefined;
+  const result = registro?.registro;
+
+  if (result?.status !== "OK" || !result.id) {
+    throw new Error("Olist/Tiny nao confirmou o produto.");
+  }
+
+  await getDatabasePool().query(
+    `
+      INSERT INTO scx_catalog_product_channel_mappings (
+        id,
+        product_id,
+        channel,
+        external_id,
+        external_sku,
+        supplier_sku,
+        sync_status,
+        last_synced_at,
+        raw_response,
+        updated_at
+      )
+      VALUES ($1, $2, 'olist', $3, $4, $5, 'synced', now(), $6, now())
+      ON CONFLICT (product_id, channel)
+      DO UPDATE SET
+        external_id = EXCLUDED.external_id,
+        external_sku = EXCLUDED.external_sku,
+        supplier_sku = EXCLUDED.supplier_sku,
+        sync_status = 'synced',
+        last_synced_at = now(),
+        raw_response = EXCLUDED.raw_response,
+        updated_at = now()
+    `,
+    [
+      `product-channel-${sent.productId}-olist`,
+      product.id,
+      String(result.id),
+      sent.scxSku,
+      sent.supplierSku,
+      JSON.stringify(result),
+    ],
+  );
+}
+
+export async function syncCatalogProductToOlistIfEnabled(productId: string) {
+  const [settings, stockMinQuantity, product] = await Promise.all([
+    getOlistSettings(),
+    getOlistPublicationStockMinQuantity(),
+    getProductForOlistSync(productId),
+  ]);
+
+  if (!settings.isEnabled) {
+    return { ok: false, skipped: true, message: "Conector Olist desativado." };
+  }
+
+  if (!product) {
+    return { ok: false, skipped: true, message: "Produto nao encontrado." };
+  }
+
+  if (product.publication_status === "draft") {
+    return { ok: false, skipped: true, message: "Rascunho nao vai ao Olist." };
+  }
+
+  const reasons = validateOlistProduct(product);
+  if (reasons.length > 0) {
+    return {
+      ok: false,
+      skipped: true,
+      message: `Produto bloqueado para Olist: ${reasons.join(", ")}.`,
+    };
+  }
+
+  const token = process.env.OLIST_API_TOKEN ?? process.env.TINY_API_TOKEN;
+  if (!token) {
+    throw new Error("Token Olist/Tiny nao configurado.");
+  }
+
+  const isUpdate = Boolean(product.olist_product_id);
+  const sent = buildTinyProduct(
+    product,
+    settings.defaultOrigin,
+    1,
+    isUpdate,
+    stockMinQuantity,
+  );
+  const apiResult = await postTinyApi(
+    isUpdate ? "produto.alterar.php" : "produto.incluir.php",
+    {
+      token,
+      produto: JSON.stringify({
+        produtos: [{ produto: sent.produto }],
+      }),
+      formato: "JSON",
+    },
+  );
+
+  await upsertProductChannelMapping(product, sent, apiResult);
+
+  return {
+    ok: true,
+    skipped: false,
+    message: isUpdate ? "Produto atualizado no Olist." : "Produto criado no Olist.",
+  };
 }
