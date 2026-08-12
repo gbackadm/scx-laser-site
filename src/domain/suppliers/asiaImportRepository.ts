@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 
 import { getDatabasePool } from "@/domain/catalog/db";
+import { buildMarketplaceTitle } from "@/domain/catalog/marketplaceTitles.js";
 
 import {
   listAsiaImportProducts,
@@ -814,6 +815,15 @@ export async function createCatalogDraftFromSupplierProduct(
 
     const catalogProductId = `catalog-${supplierProduct.external_id}`;
     const scxSku = await nextScxSku(client, categoryName);
+    const commercialTitle = buildMarketplaceTitle(
+      supplierProduct.raw_name,
+      "mercado_livre",
+      { identifiers: [scxSku, supplierProduct.external_id] },
+    );
+
+    if (!commercialTitle) {
+      throw new Error("Produto importado sem titulo comercial valido.");
+    }
 
     const catalogProductResult = await client.query<{ id: string }>(
       `
@@ -871,7 +881,7 @@ export async function createCatalogDraftFromSupplierProduct(
         catalogProductId,
         supplierProduct.external_id,
         scxSku,
-        supplierProduct.raw_name,
+        commercialTitle,
         supplierProduct.raw_description,
         categoryId,
         supplierProduct.id,

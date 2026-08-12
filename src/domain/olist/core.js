@@ -1,3 +1,5 @@
+import { buildMarketplaceTitle } from "../catalog/marketplaceTitles.js";
+
 export const OLIST_CHANNEL = "olist";
 export const DEFAULT_BATCH_SIZE = 20;
 export const DEFAULT_BATCH_CALLS_PER_MINUTE = 5;
@@ -148,11 +150,10 @@ export function buildCategoryTree(product, rawPayload) {
   return product.category;
 }
 
-export function buildProductName(product, scxSku) {
-  const suffix = ` - ${scxSku}`;
-  const baseMaxLength = 120 - suffix.length;
-
-  return `${truncate(product.title, baseMaxLength)}${suffix}`;
+export function buildProductName(product) {
+  return buildMarketplaceTitle(product.title, "olist", {
+    identifiers: [product.scx_sku, product.sku, product.external_id],
+  });
 }
 
 export function buildProductionSteps(product) {
@@ -392,7 +393,7 @@ export function buildTinyProduct(
   const tinyProduct = {
     sequencia: String(sequence),
     codigo: truncate(scxSku, 30),
-    nome: buildProductName(product, scxSku),
+    nome: buildProductName(product),
     unidade: "UN",
     preco: toMoney(product.price_amount_in_cents),
     preco_custo: toMoney(costInCents),
@@ -426,7 +427,9 @@ export function buildTinyProduct(
         ? tinyVariations.map(({ variacao }) => ({ variacao }))
         : undefined,
     seo: {
-      seo_title: truncate(product.title, 120),
+      seo_title: buildMarketplaceTitle(product.title, "site", {
+        identifiers: [scxSku, supplierSku],
+      }),
       seo_keywords: truncate(buildSeoKeywords(product, rawPayload), 255),
       seo_description: truncate(product.description ?? product.title, 255),
       link_video: truncate(rawPayload.video, 100),

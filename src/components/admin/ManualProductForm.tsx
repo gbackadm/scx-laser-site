@@ -62,6 +62,7 @@ export function ManualProductForm({
   const [variations, setVariations] = useState<VariationDraft[]>(() => [
     createVariation(0),
   ]);
+  const [title, setTitle] = useState("");
 
   function updateVariation(
     variationId: string,
@@ -174,8 +175,19 @@ export function ManualProductForm({
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1fr_180px]">
         <label className="grid gap-2 text-sm font-bold text-zinc-200">
-          Nome do produto <RequiredMark />
-          <input name="title" required maxLength={120} className={inputClassName} />
+          Titulo comercial <RequiredMark />
+          <input
+            name="title"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            required
+            maxLength={60}
+            placeholder="Garrafa termica inox 500 ml"
+            className={inputClassName}
+          />
+          <span className="text-right text-[0.68rem] font-semibold text-zinc-500">
+            {title.length}/60
+          </span>
         </label>
         <label className="grid gap-2 text-sm font-bold text-zinc-200">
           Categoria <RequiredMark />

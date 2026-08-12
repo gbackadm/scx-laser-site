@@ -1,7 +1,6 @@
 import { LockKeyhole, ShieldCheck } from "lucide-react";
 import { redirect } from "next/navigation";
 
-import { AdminNotice } from "@/components/admin/AdminNotice";
 import { getCurrentAdminSession } from "@/domain/auth/session";
 
 import { loginAdmin } from "./actions";
@@ -35,7 +34,7 @@ export default async function AdminLoginPage({
       : params?.erro === "campos"
         ? "Informe e-mail e senha."
         : params?.erro === "banco"
-          ? "Banco de dados indisponivel ou nao configurado no ambiente."
+          ? "Nao foi possivel acessar os dados agora. Tente novamente em instantes."
         : null;
 
   return (
@@ -47,15 +46,11 @@ export default async function AdminLoginPage({
               SCX Laser Admin
             </p>
             <h1 className="mt-4 max-w-2xl text-4xl font-black leading-tight sm:text-5xl">
-              Base de acesso administrativo
+              Painel administrativo
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-300">
-              Acesso local com sessao segura, senha com hash forte e protecao
-              server-side das rotas administrativas.
+              Controle catalogo, estoque, precos e integracoes da SCX Laser.
             </p>
-            <div className="mt-7 max-w-2xl">
-              <AdminNotice />
-            </div>
           </section>
 
           <section className="rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.36)] sm:p-6">
@@ -64,8 +59,7 @@ export default async function AdminLoginPage({
             </div>
             <h2 className="mt-5 text-xl font-black">Entrar no painel</h2>
             <p className="mt-2 text-sm leading-6 text-zinc-400">
-              Use a conta administrativa criada pelo comando local seguro. Nao ha
-              usuario ou senha padrao.
+              Use sua conta administrativa da SCX Laser.
             </p>
 
             {errorMessage ? (
@@ -112,15 +106,6 @@ export default async function AdminLoginPage({
               </button>
             </form>
 
-            <div className="mt-6 rounded border border-white/10 bg-black/30 p-4">
-              <p className="text-xs font-black uppercase tracking-[0.16em] text-zinc-500">
-                Previa local
-              </p>
-              <p className="mt-2 text-sm leading-6 text-zinc-300">
-                Para criar o primeiro acesso, execute o comando interativo local
-                documentado. A senha nunca fica em texto puro.
-              </p>
-            </div>
           </section>
         </div>
       </div>

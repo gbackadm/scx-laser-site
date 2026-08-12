@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import { getDatabasePool } from "./db";
+import { buildMarketplaceTitle } from "./marketplaceTitles.js";
 import type {
   CatalogProduct,
   CatalogPublicationStatus,
@@ -343,9 +344,14 @@ export async function updateCatalogProductForAdmin(input: CatalogProductUpdate) 
   const pool = getDatabasePool();
   const categoryId = await ensureCatalogCategory(input.categoryName);
   const imageUrls = normalizeImageUrls(input.imageUrls);
+  const commercialTitle = buildMarketplaceTitle(input.title, "mercado_livre");
 
   if (imageUrls.length === 0) {
     throw new Error("O produto precisa ter pelo menos uma foto valida.");
+  }
+
+  if (!commercialTitle) {
+    throw new Error("O produto precisa ter um titulo comercial valido.");
   }
 
   await pool.query("BEGIN");
@@ -365,7 +371,7 @@ export async function updateCatalogProductForAdmin(input: CatalogProductUpdate) 
       `,
       [
         input.productId,
-        input.title.trim(),
+        commercialTitle,
         input.description.trim(),
         categoryId,
         input.priceAmountInCents,
@@ -395,7 +401,7 @@ export async function updateCatalogProductForAdmin(input: CatalogProductUpdate) 
           )
           VALUES ($1, $2, $3, $4, 'curated', $5)
         `,
-        [randomUUID(), input.productId, url, input.title.trim(), index],
+        [randomUUID(), input.productId, url, commercialTitle, index],
       );
     }
 
@@ -418,6 +424,9 @@ export async function createManualCatalogProductForAdmin(
   const catalogProductId = `catalog-${identifier(scxSku)}`;
   const categoryId = await ensureCatalogCategory(input.categoryName);
   const imageUrls = normalizeImageUrls(input.imageUrls);
+  const commercialTitle = buildMarketplaceTitle(input.title, "mercado_livre", {
+    identifiers: [scxSku, supplierCode],
+  });
   const variants = input.variants.map((variant) => ({
     ...variant,
     scxSku: variant.scxSku.trim().toUpperCase(),
@@ -433,6 +442,10 @@ export async function createManualCatalogProductForAdmin(
 
   if (imageUrls.length === 0) {
     throw new Error("O produto precisa ter pelo menos uma foto valida.");
+  }
+
+  if (!commercialTitle) {
+    throw new Error("O produto precisa ter um titulo comercial valido.");
   }
 
   if (variants.length === 0) {
@@ -469,7 +482,7 @@ export async function createManualCatalogProductForAdmin(
   const dimensionLabel = `${input.heightCm} x ${input.widthCm} x ${input.lengthCm} cm`;
   const rawPayload = {
     referencia: supplierCode,
-    nome: input.title.trim(),
+    nome: commercialTitle,
     descricao: input.description.trim(),
     preco: (input.costAmountInCents / 100).toFixed(2),
     ncm: input.ncm.trim(),
@@ -563,7 +576,7 @@ export async function createManualCatalogProductForAdmin(
         supplierId,
         supplierName,
         supplierCode,
-        input.title.trim(),
+        commercialTitle,
         input.description.trim() || null,
         input.categoryName.trim(),
         imageUrls,
@@ -628,7 +641,7 @@ export async function createManualCatalogProductForAdmin(
         catalogProductId,
         supplierCode,
         scxSku,
-        input.title.trim(),
+        commercialTitle,
         input.description.trim(),
         categoryId,
         supplierProductId,
@@ -652,7 +665,7 @@ export async function createManualCatalogProductForAdmin(
           )
           VALUES ($1, $2, $3, $4, 'curated', $5)
         `,
-        [randomUUID(), catalogProductId, url, input.title.trim(), index],
+        [randomUUID(), catalogProductId, url, commercialTitle, index],
       );
     }
 

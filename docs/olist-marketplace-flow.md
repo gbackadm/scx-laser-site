@@ -44,6 +44,26 @@ Exemplo:
 | Codigo pelo fornecedor | `CM17725B` |
 | Fornecedor | `Asia Import` |
 
+## Titulo comercial
+
+O titulo e texto de venda. SKU SCX, codigo do fornecedor e ID do canal ficam
+somente nos campos de identificacao e nunca devem ser anexados ao nome.
+
+Regra automatica para todo produto novo ou atualizado:
+
+- limpar espacos, simbolos e pontuacao desnecessaria;
+- expandir abreviacoes como `c/` e `Conj.`;
+- remover SKU SCX, codigo do fornecedor, condicao e chamadas promocionais;
+- preservar palavras inteiras ao atingir o limite;
+- usar 60 caracteres como teto conservador para Mercado Livre;
+- aceitar limite informado pelo canal/categoria quando a integracao o fornecer;
+- manter variacao de cor, tamanho e modelo na grade, sem repetir no titulo pai.
+
+O formato comercial segue `produto + marca + modelo + especificacao relevante`,
+somente quando os dados forem conhecidos. A funcao central e
+`buildMarketplaceTitle`; cadastro manual, Asia Import e Olist usam a mesma
+regra.
+
 ## Elegibilidade
 
 O envio em massa deve avaliar todos os produtos com status:
@@ -81,8 +101,7 @@ de precos/publicacao; o padrao e 1000 unidades.
 Dados gerais do Tiny/Olist recebem os campos operacionais:
 
 - SKU SCX em `codigo`.
-- Nome em `nome`, com SKU SCX no final para evitar rejeicao por nome duplicado
-  no Tiny/Olist.
+- Titulo comercial limpo em `nome`, sem SKU SCX ou codigo do fornecedor.
 - Unidade `UN`.
 - Preco de venda calculado.
 - Preco de custo.
@@ -216,6 +235,16 @@ O envio respeita:
 - produtos com ID Olist salvo sao atualizados;
 - produtos sem ID Olist salvo sao criados;
 - retornos OK gravam/atualizam o mapeamento no banco.
+- erro geral do provedor interrompe os lotes seguintes e marca os mapeamentos
+  afetados como `failed`; uma resposta de erro nunca e tratada como sucesso.
+- atualizacoes em massa carregam as variacoes e seus IDs antes de montar o
+  payload, preservando a classe `V` e a grade existente.
+
+Em 12/08/2026, a simulacao de atualizacao encontrou 93 produtos elegiveis e
+nenhum bloqueio. A execucao foi recusada pelo Olist/Tiny com `Plano nao tem
+acesso a API`; por isso os mapeamentos foram marcados como falha e os nomes do
+canal nao foram alterados. Antes da proxima execucao, regularizar o acesso da
+conta a API ou migrar o conector para o endpoint autorizado pelo plano.
 
 ## Tela no site
 

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import process from "node:process";
 import pg from "pg";
 
+import { buildMarketplaceTitle } from "../src/domain/catalog/marketplaceTitles.js";
 import {
   buildTinyProduct as buildSharedTinyProduct,
   DEFAULT_BATCH_CALLS_PER_MINUTE as SHARED_DEFAULT_BATCH_CALLS_PER_MINUTE,
@@ -199,9 +200,9 @@ function buildCategoryTree(product, rawPayload) {
 }
 
 function buildProductName(product, scxSku) {
-  const suffix = ` - ${scxSku}`;
-  const baseMaxLength = 120 - suffix.length;
-  return `${truncate(product.title, baseMaxLength)}${suffix}`;
+  return buildMarketplaceTitle(product.title, "olist", {
+    identifiers: [scxSku, product.sku, product.external_id],
+  });
 }
 
 function buildProductionSteps(product) {
@@ -345,11 +346,40 @@ async function postTinyApi(path, params) {
   });
 
   const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Olist respondeu HTTP ${response.status}.`);
+  }
+
   try {
     return JSON.parse(text);
   } catch {
     return { raw: text };
   }
+}
+
+function apiErrorMessage(apiResult) {
+  const retorno = apiResult?.retorno;
+  if (retorno?.status !== "Erro") return null;
+
+  const messages = (retorno.erros ?? [])
+    .map((entry) => entry?.erro)
+    .filter(Boolean);
+
+  return messages.join("; ") || "Olist recusou o lote sem detalhar o motivo.";
+}
+
+async function markMappingsFailed(pool, batchItems, apiResult) {
+  await pool.query(
+    `
+      UPDATE scx_catalog_product_channel_mappings
+      SET sync_status = 'failed',
+        raw_response = $2::jsonb,
+        updated_at = now()
+      WHERE channel = 'olist'
+        AND product_id = ANY($1::text[])
+    `,
+    [batchItems.map((item) => item.productId), JSON.stringify(apiResult)],
+  );
 }
 
 async function upsertMappings(pool, batchItems, apiResult) {
@@ -525,6 +555,7 @@ try {
         scm.external_id AS olist_supplier_id,
         pcm.external_id AS olist_product_id,
         coalesce(images.items, '[]'::json) AS images,
+        coalesce(variants.items, '[]'::json) AS variants,
         coalesce(components.items, '[]'::json) AS components,
         coalesce(production_steps.items, '[]'::json) AS production_steps
       FROM scx_catalog_products p
@@ -544,6 +575,38 @@ try {
         FROM scx_catalog_product_images i
         WHERE i.product_id = p.id
       ) images ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(
+          json_build_object(
+            'id', variant.id,
+            'scx_sku', variant.scx_sku,
+            'supplier_sku', variant.supplier_sku,
+            'name', variant.name,
+            'price_amount_in_cents', variant.price_amount_in_cents,
+            'cost_amount_in_cents', variant.cost_amount_in_cents,
+            'stock_quantity', variant.stock_quantity,
+            'attributes', variant.attributes,
+            'is_active', variant.is_active,
+            'sort_order', variant.sort_order,
+            'olist_variant_id', variant_mapping.external_id,
+            'images', coalesce(variant_images.items, '[]'::json)
+          )
+          ORDER BY variant.sort_order ASC, variant.id ASC
+        ) AS items
+        FROM scx_catalog_product_variants variant
+        LEFT JOIN scx_catalog_product_variant_channel_mappings variant_mapping
+          ON variant_mapping.variant_id = variant.id
+         AND variant_mapping.channel = 'olist'
+        LEFT JOIN LATERAL (
+          SELECT json_agg(
+            json_build_object('url', image.url, 'sort_order', image.sort_order)
+            ORDER BY image.sort_order ASC
+          ) AS items
+          FROM scx_catalog_product_variant_images image
+          WHERE image.variant_id = variant.id
+        ) variant_images ON true
+        WHERE variant.product_id = p.id
+      ) variants ON true
       LEFT JOIN LATERAL (
         SELECT json_agg(
           json_build_object(
@@ -638,6 +701,12 @@ try {
 
       console.log(`Batch ${callIndex + 1}/${totalCalls} (${endpoint}):`);
       console.log(JSON.stringify(apiResult, null, 2));
+      const errorMessage = apiErrorMessage(apiResult);
+      if (errorMessage) {
+        await markMappingsFailed(pool, items, apiResult);
+        throw new Error(`Falha no lote ${callIndex + 1}: ${errorMessage}`);
+      }
+
       await upsertMappings(pool, items, apiResult);
       callIndex += 1;
     }

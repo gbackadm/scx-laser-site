@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import process from "node:process";
 import pg from "pg";
 
+import { buildMarketplaceTitle } from "../src/domain/catalog/marketplaceTitles.js";
+
 const { Pool } = pg;
 
 function loadLocalEnv() {
@@ -171,9 +173,9 @@ function buildCategoryTree(product, rawPayload) {
 }
 
 function buildProductName(product, scxSku) {
-  const suffix = ` - ${scxSku}`;
-  const baseMaxLength = 120 - suffix.length;
-  return `${truncate(product.title, baseMaxLength)}${suffix}`;
+  return buildMarketplaceTitle(product.title, "olist", {
+    identifiers: [scxSku, product.sku, product.external_id],
+  });
 }
 
 function buildProductionSteps(product) {

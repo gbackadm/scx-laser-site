@@ -77,7 +77,7 @@ export function AdminShell({ session, children }: AdminShellProps) {
           <div>
             <p className="text-sm font-black text-white">SCX Laser</p>
             <p className="text-xs font-bold text-zinc-500">
-              Administracao{process.env.NODE_ENV === "development" ? " local" : ""}
+              Administracao
             </p>
           </div>
         </Link>

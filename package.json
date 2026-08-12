@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --test src/domain/olist/core.test.mjs",
+    "test": "node --test src/domain/olist/core.test.mjs src/domain/catalog/marketplaceTitles.test.mjs",
     "lint": "next lint",
     "db:migrate": "node scripts/migrate-catalog-db.mjs",
     "db:check": "node scripts/check-catalog-db.mjs",
@@ -18,6 +18,7 @@
     "olist:recover-orphans": "node scripts/recover-olist-orphans.mjs",
     "olist:clear-lock": "node scripts/clear-olist-advisory-lock.mjs",
     "catalog:audit": "node scripts/audit-catalog-health.mjs",
+    "catalog:normalize-titles": "node scripts/normalize-marketplace-titles.mjs --apply",
     "db:copy-to-production": "node scripts/copy-catalog-db.mjs",
     "admin:create-user": "node scripts/create-admin-user.mjs"
   },

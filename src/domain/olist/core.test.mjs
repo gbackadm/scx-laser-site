@@ -54,6 +54,8 @@ test("monta produto pai com variacoes oficiais do Tiny", () => {
 
   assert.deepEqual(validateOlistProduct(product), []);
   assert.equal(sent.produto.classe_produto, "V");
+  assert.equal(sent.produto.nome, "Caneta metalica");
+  assert.ok(!sent.produto.nome.includes("SCX-CAN-0001"));
   assert.equal(sent.produto.preco, "49.90");
   assert.deepEqual(sent.produto.variacoes, [
     {

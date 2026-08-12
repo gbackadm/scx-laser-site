@@ -116,7 +116,6 @@ function ProductThumbnail({
 type CatalogPanelProps = {
   categories: string[];
   products: AdminProduct[];
-  sourceLabel: string;
   canEdit: boolean;
   canPublish: boolean;
   canSync: boolean;
@@ -128,7 +127,6 @@ type SortDirection = "asc" | "desc";
 export function CatalogPanel({
   categories,
   products: initialProducts,
-  sourceLabel,
   canEdit,
   canPublish,
   canSync,
@@ -281,9 +279,6 @@ export function CatalogPanel({
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-300">
               Gerencie cadastro, variacoes, estoque, publicacao e sincronizacao.
-            </p>
-            <p className="mt-2 text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">
-              Origem: {sourceLabel}
             </p>
           </div>
 
@@ -761,7 +756,6 @@ export function CatalogPanel({
       <div className="flex flex-col gap-3 border-t border-white/10 px-5 py-4 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
         <div>
           {visibleProducts.length} de {products.length} item(ns) exibido(s).
-          Publicacao exige papel owner ou manager; seller permanece somente leitura.
         </div>
         {pageSize !== "Todos" ? (
           <div className="flex items-center gap-2 text-zinc-300">

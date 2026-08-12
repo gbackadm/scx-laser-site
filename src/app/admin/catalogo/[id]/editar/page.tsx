@@ -480,10 +480,11 @@ export default async function EditCatalogProductPage({
             <input type="hidden" name="returnAnchor" value={returnAnchor} />
             <div className="grid gap-4 lg:grid-cols-2">
               <label className="grid gap-2 text-sm font-bold text-zinc-200">
-                Titulo
+                Titulo comercial
                 <input
                   name="title"
                   defaultValue={product.title}
+                  maxLength={60}
                   disabled={!canEditCatalog}
                   className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500"
                 />
