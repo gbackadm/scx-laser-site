@@ -236,6 +236,8 @@ Estado atual:
 - Produto ja existente como simples e migrado em duas etapas: o cadastro antigo
   vira legado inativo e o novo pai variavel assume o SKU SCX original, sem
   ultrapassar o limite configurado de chamadas.
+- Migracao real concluida: 79 pais e 189 variacoes confirmados no Olist, sem
+  bloqueios de integridade. O ciclo automatico processa 20 produtos por hora.
 
 ## Rotina automatica Asia Import
 

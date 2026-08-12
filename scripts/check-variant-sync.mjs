@@ -43,7 +43,10 @@ try {
         auto_sync_enabled,
         auto_sync_mode,
         batch_size,
-        batch_calls_per_minute
+        batch_calls_per_minute,
+        auto_sync_interval_minutes,
+        last_auto_sync_at,
+        next_auto_sync_after
       FROM scx_olist_sync_settings
       WHERE id = 'default'
     `),

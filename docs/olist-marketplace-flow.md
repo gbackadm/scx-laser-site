@@ -237,6 +237,10 @@ Migracoes podem usar duas chamadas dentro desse lote. Essa divisao evita o
 limite de tempo da funcao Netlify. Todo resultado fica registrado em
 `scx_olist_sync_runs`.
 
+A concorrencia e controlada por uma reserva atomica de `next_auto_sync_after`.
+Ela nao usa bloqueio de sessao, portanto uma funcao interrompida nao consegue
+prender as execucoes seguintes.
+
 Se o Tiny confirmar a criacao, mas a funcao for interrompida antes de salvar os
 IDs, a tentativa seguinte detecta o erro de SKU duplicado, pesquisa o pai pelo
 SKU SCX, obtem os filhos e recompõe ate cinco mapeamentos por execucao. Nenhum

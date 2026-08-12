@@ -14,6 +14,8 @@
     "db:backfill-variants": "node scripts/backfill-asia-variants.mjs",
     "olist:check-variants": "node scripts/check-olist-variant-eligibility.mjs",
     "olist:configure-window": "node scripts/configure-olist-window.mjs",
+    "olist:recover-orphans": "node scripts/recover-olist-orphans.mjs",
+    "olist:clear-lock": "node scripts/clear-olist-advisory-lock.mjs",
     "db:copy-to-production": "node scripts/copy-catalog-db.mjs",
     "admin:create-user": "node scripts/create-admin-user.mjs"
   },

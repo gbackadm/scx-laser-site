@@ -1271,59 +1271,54 @@ export async function executeOlistSync({
 
 export async function runScheduledOlistSyncIfDue() {
   const settings = await getOlistSettings();
-  const now = new Date();
-  const nextAutoSyncAfter = settings.nextAutoSyncAfter
-    ? new Date(settings.nextAutoSyncAfter)
-    : null;
 
   if (!settings.isEnabled || !settings.autoSyncEnabled) {
     return { skipped: true, reason: "Rotina Olist desativada." };
   }
 
-  if (nextAutoSyncAfter && nextAutoSyncAfter > now) {
-    return { skipped: true, reason: "Ainda nao chegou o horario da proxima rotina." };
+  const claimResult = await getDatabasePool().query<{
+    next_auto_sync_after: Date | string;
+  }>(`
+    UPDATE scx_olist_sync_settings
+    SET next_auto_sync_after = now() + make_interval(mins => auto_sync_interval_minutes),
+      updated_at = now()
+    WHERE id = 'default'
+      AND is_enabled
+      AND auto_sync_enabled
+      AND (next_auto_sync_after IS NULL OR next_auto_sync_after <= now())
+    RETURNING next_auto_sync_after
+  `);
+  const claimedNextRun = claimResult.rows[0]?.next_auto_sync_after;
+
+  if (!claimedNextRun) {
+    return { skipped: true, reason: "Outra rotina assumiu esta janela ou ainda nao chegou o horario." };
   }
 
-  const lockClient = await getDatabasePool().connect();
+  const result =
+    settings.autoSyncMode === "send"
+      ? await executeOlistSync({ triggerSource: "schedule" })
+      : await simulateOlistSync({
+          triggerSource: "schedule",
+          saveRun: true,
+        });
 
-  try {
-    const lockResult = await lockClient.query<{ acquired: boolean }>(
-      `SELECT pg_try_advisory_lock(hashtext('scx-olist-scheduled-sync')) AS acquired`,
-    );
+  await getDatabasePool().query(
+    `
+      UPDATE scx_olist_sync_settings
+      SET last_auto_sync_at = now(),
+        updated_at = now()
+      WHERE id = 'default'
+    `,
+  );
 
-    if (!lockResult.rows[0]?.acquired) {
-      return { skipped: true, reason: "Outra rotina Olist ja esta em andamento." };
-    }
-
-    const result =
-      settings.autoSyncMode === "send"
-        ? await executeOlistSync({ triggerSource: "schedule" })
-        : await simulateOlistSync({
-            triggerSource: "schedule",
-            saveRun: true,
-          });
-    const nextRun = new Date(
-      now.getTime() + settings.autoSyncIntervalMinutes * 60_000,
-    );
-
-    await getDatabasePool().query(
-      `
-        UPDATE scx_olist_sync_settings
-        SET last_auto_sync_at = $1,
-          next_auto_sync_after = $2,
-          updated_at = now()
-        WHERE id = 'default'
-      `,
-      [now, nextRun],
-    );
-
-    return { skipped: false, result, nextAutoSyncAfter: nextRun.toISOString() };
-  } finally {
-    await lockClient.query(
-      `SELECT pg_advisory_unlock(hashtext('scx-olist-scheduled-sync'))`,
-    );
-    lockClient.release();
-  }
+  return {
+    skipped: false,
+    result,
+    nextAutoSyncAfter:
+      claimedNextRun instanceof Date
+        ? claimedNextRun.toISOString()
+        : String(claimedNextRun),
+  };
 }
 
 export async function syncCatalogProductToOlistIfEnabled(productId: string) {
