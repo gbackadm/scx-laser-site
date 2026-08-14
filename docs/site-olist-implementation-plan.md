@@ -55,7 +55,7 @@ o produto deve ficar bloqueado com motivo claro.
 | Produto publicado e estoque >= 1000 | `situacao = A` |
 | Produto hidden/out_of_stock | `situacao = I` |
 | Produto draft | nao entra no envio |
-| Imagens | somente `imagens_externas`, maximo 10 URLs |
+| Imagens | `anexos` importados para a biblioteca da Olist, maximo 10 URLs |
 | Nome no Olist | nome comercial + SKU SCX para evitar duplicidade |
 | Categoria | arvore com `>>` |
 | Etapas | sempre enviar padrao SCX ou etapas especificas |

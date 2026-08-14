@@ -8,3 +8,7 @@ tsconfig.tsbuildinfo
 
 # Local Netlify folder
 .netlify
+
+.vercel
+.env*
+.codex-dev-*.log

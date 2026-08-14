@@ -32,9 +32,9 @@ if (!Number.isInteger(callsPerMinute) || callsPerMinute < 1 || callsPerMinute > 
 
 if (
   intervalMinutes !== undefined &&
-  (!Number.isInteger(intervalMinutes) || intervalMinutes < 60 || intervalMinutes > 1440)
+  (!Number.isInteger(intervalMinutes) || intervalMinutes < 10 || intervalMinutes > 1440)
 ) {
-  throw new Error("Intervalo deve estar entre 60 e 1440 minutos.");
+  throw new Error("Intervalo deve estar entre 10 e 1440 minutos.");
 }
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });

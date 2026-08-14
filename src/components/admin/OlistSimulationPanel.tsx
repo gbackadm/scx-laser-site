@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
-  Link2,
   PlayCircle,
   RefreshCw,
   Send,
@@ -94,38 +93,61 @@ export function OlistSimulationPanel({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
-              Conexao oficial
+              Integracao V2
             </p>
             <div className="mt-2 flex items-center gap-3">
               <span
                 className={`h-2.5 w-2.5 rounded-full ${
-                  connection.connected ? "bg-emerald-400" : "bg-amber-400"
+                  connection.configured ? "bg-emerald-400" : "bg-amber-400"
                 }`}
-                title={connection.connected ? "Conta conectada" : "Autorizacao pendente"}
+                title={connection.configured ? "Token configurado" : "Token ausente"}
               />
               <h2 className="text-xl font-black text-white sm:text-2xl">
-                {connection.connected ? "Olist conectada" : "Conectar conta Olist"}
+                {connection.configured ? "Token V2 configurado" : "Configurar token V2"}
               </h2>
             </div>
             <p className="mt-2 text-sm leading-6 text-zinc-300">
-              {connection.connected
-                ? "A API atual esta autorizada para enviar produtos, variacoes e imagens."
-                : "Autorize uma vez para liberar o envio completo e a renovacao automatica do acesso."}
+              {connection.configured
+                ? "Produtos, variacoes e imagens sao enviados pela API V2 como anexos importados."
+                : "Informe o token V2 no ambiente para habilitar os envios."}
             </p>
           </div>
-          {!connection.connected ? (
-            <a
-              href="/admin/api/olist/oauth/connect"
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-emerald-300/35 px-4 text-sm font-black text-emerald-100 transition hover:border-emerald-200 hover:bg-emerald-400/10"
-            >
-              <Link2 size={17} />
-              Conectar Olist
-            </a>
-          ) : (
-            <div className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">
-              Renovacao automatica ativa
+          {connection.configured ? (
+            <div className="flex flex-col items-stretch gap-2 sm:items-end">
+              <div className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">
+                Importacao para imagens e anexos
+              </div>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => {
+                  setMessage(null);
+                  startTransition(async () => {
+                    try {
+                      const response = await fetch("/admin/api/olist/imagens", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ all: true, onlyFailed: true }),
+                      });
+                      const result = (await response.json().catch(() => null)) as
+                        | OlistSimulationResult
+                        | null;
+                      setMessage(
+                        result?.message ??
+                          `Nao foi possivel sincronizar imagens. Codigo ${response.status}.`,
+                      );
+                    } catch {
+                      setMessage("Nao foi possivel sincronizar as imagens agora.");
+                    }
+                  });
+                }}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-emerald-300/35 px-4 text-sm font-black text-emerald-100 transition hover:border-emerald-200 hover:bg-emerald-400/10 disabled:border-white/12 disabled:text-zinc-600"
+              >
+                <RefreshCw size={17} className={isPending ? "animate-spin" : ""} />
+                Reprocessar imagens pendentes
+              </button>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -185,6 +207,8 @@ export function OlistSimulationPanel({
                 defaultValue={settings.autoSyncIntervalMinutes}
                 className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser"
               >
+                <option value={10}>A cada 10 minutos</option>
+                <option value={30}>A cada 30 minutos</option>
                 <option value={60}>A cada hora</option>
                 <option value={360}>A cada 6 horas</option>
                 <option value={720}>A cada 12 horas</option>

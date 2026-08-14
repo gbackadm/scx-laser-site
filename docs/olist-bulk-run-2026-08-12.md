@@ -47,8 +47,9 @@ variacoes.
 - Medidas bidimensionais passam a usar largura como comprimento quando nao ha
   profundidade explicita.
 - NCM pode vir do campo principal ou da primeira variacao com NCM.
-- Imagens passaram a ser enviadas como `imagens_externas`, limitadas a 10 URLs
-  por produto, evitando erro de anexo acima de 2 MB.
+- Na execucao original, as imagens foram enviadas como `imagens_externas`. Essa
+  decisao foi substituida pelo uso de `anexos`, que importa os arquivos para a
+  biblioteca interna da Olist e permite associa-los as variacoes.
 - A regra de estoque minimo passou a ser aplicada no conector Olist: produtos com
   estoque abaixo de 1000 unidades continuam sendo enviados ao Tiny/Olist, mas com
   `situacao = I`.

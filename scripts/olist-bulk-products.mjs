@@ -313,9 +313,7 @@ function buildTinyProduct(product, origin, sequence, isUpdate, stockMinQuantity)
     comprimento_embalagem: formatDecimal(productMeasure.length, 2),
     diametro_embalagem: formatDecimal(productMeasure.diameter, 2),
     dias_preparacao: "3",
-    imagens_externas: externalImageUrls.map((url) => ({
-      imagem_externa: { url },
-    })),
+    anexos: externalImageUrls.map((url) => ({ anexo: url })),
     seo: {
       seo_title: truncate(product.title, 120),
       seo_keywords: truncate(buildSeoKeywords(product, rawPayload), 255),

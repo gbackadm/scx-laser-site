@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { getDatabasePool } from "@/domain/catalog/db";
 import {
   buildTinyProduct,
+  buildTinyVariantImageUpdate,
   DEFAULT_BATCH_SIZE,
   DEFAULT_STOCK_MIN_QUANTITY,
   summarizeOlistPlan,
@@ -443,7 +444,7 @@ export async function updateOlistSettings(input: OlistSettingsUpdate) {
     5,
     Math.max(1, Math.round(input.batchCallsPerMinute)),
   );
-  const safeInterval = Math.max(60, Math.round(input.autoSyncIntervalMinutes));
+  const safeInterval = Math.max(10, Math.round(input.autoSyncIntervalMinutes));
   const nextAutoSyncAfter = input.autoSyncEnabled
     ? new Date(Date.now() + safeInterval * 60_000)
     : null;
@@ -889,6 +890,52 @@ async function markProductOlistSyncFailed(
   );
 }
 
+const OLIST_MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+const olistAttachmentCompatibility = new Map<string, Promise<boolean>>();
+
+function isOlistAttachmentCompatible(url: string) {
+  const cached = olistAttachmentCompatibility.get(url);
+  if (cached) return cached;
+
+  const check = fetch(url, { method: "HEAD", cache: "no-store" })
+    .then((response) => {
+      const size = Number(response.headers.get("content-length") ?? 0);
+      return response.ok && (!Number.isFinite(size) || size <= 0 || size <= OLIST_MAX_ATTACHMENT_BYTES);
+    })
+    .catch(() => false);
+  olistAttachmentCompatibility.set(url, check);
+  return check;
+}
+
+async function prepareOlistAttachments(products: OlistSyncProduct[]) {
+  return Promise.all(
+    products.map(async (product) => ({
+      ...product,
+      images: (
+        await Promise.all(
+          (product.images ?? []).map(async (image) => ({
+            image,
+            compatible: await isOlistAttachmentCompatible(image.url),
+          })),
+        )
+      ).filter((entry) => entry.compatible).map((entry) => entry.image),
+      variants: await Promise.all(
+        (product.variants ?? []).map(async (variant) => ({
+          ...variant,
+          images: (
+            await Promise.all(
+              (variant.images ?? []).map(async (image) => ({
+                image,
+                compatible: await isOlistAttachmentCompatible(image.url),
+              })),
+            )
+          ).filter((entry) => entry.compatible).map((entry) => entry.image),
+        })),
+      ),
+    })),
+  );
+}
+
 async function sendTinyProductBatch({
   products,
   settings,
@@ -909,7 +956,8 @@ async function sendTinyProductBatch({
     throw new Error("Token Olist/Tiny nao configurado.");
   }
 
-  const sentProducts = products.map((product, index) => {
+  const preparedProducts = await prepareOlistAttachments(products);
+  const sentProducts = preparedProducts.map((product, index) => {
     const sent = buildTinyProduct(
       product,
       settings.defaultOrigin,
@@ -947,8 +995,11 @@ async function sendTinyProductBatch({
     ok: boolean;
     error?: string;
   }> = [];
+  const variantImageUpdates: Array<
+    ReturnType<typeof buildTinyVariantImageUpdate> & { product: OlistSyncProduct }
+  > = [];
 
-  for (const [index, product] of products.entries()) {
+  for (const [index, product] of preparedProducts.entries()) {
     const sequenceRecord = records.find(
       (record) => Number(record.sequencia) === index + 1,
     );
@@ -957,6 +1008,34 @@ async function sendTinyProductBatch({
     if (record.status === "OK" && record.id) {
       if (!archiveExistingProduct) {
         await upsertProductChannelMapping(product, sentProducts[index], record);
+
+        const returnedVariants = Array.isArray(record.variacoes)
+          ? record.variacoes
+          : [];
+        for (const [variantIndex, sentVariant] of sentProducts[index].variants.entries()) {
+          const variant = product.variants?.find(
+            (candidate) => candidate.id === sentVariant.variantId,
+          );
+          const externalId =
+            returnedVariants[variantIndex]?.variacao?.id ??
+            sentVariant.olistVariantId;
+
+          if (!variant || !externalId || !variant.images?.length) {
+            continue;
+          }
+
+          variantImageUpdates.push({
+            ...buildTinyVariantImageUpdate(
+              product,
+              variant,
+              externalId,
+              settings.defaultOrigin,
+              variantImageUpdates.length + 1,
+              stockMinQuantity,
+            ),
+            product,
+          });
+        }
       }
       results.push({ productId: product.id, ok: true });
     } else {
@@ -965,6 +1044,49 @@ async function sendTinyProductBatch({
         productId: product.id,
         ok: false,
         error: tinyRecordError(record, generalErrors),
+      });
+    }
+  }
+
+  for (const updateBatch of chunks(variantImageUpdates, settings.batchSize)) {
+    const variantResult = await postTinyApi("produto.alterar.php", {
+      token,
+      produto: JSON.stringify({
+        produtos: updateBatch.map(({ produto }, index) => ({
+          produto: { ...produto, sequencia: String(index + 1) },
+        })),
+      }),
+      formato: "JSON",
+    });
+    const { records: variantRecords, generalErrors: variantGeneralErrors } =
+      tinyApiRecords(variantResult);
+
+    for (const [index, update] of updateBatch.entries()) {
+      const record =
+        variantRecords.find((entry) => Number(entry.sequencia) === index + 1) ??
+        variantRecords[index] ??
+        {};
+
+      if (record.status === "OK") {
+        continue;
+      }
+
+      const error = `imagem da variacao ${update.variantId}: ${tinyRecordError(
+        record,
+        variantGeneralErrors,
+      )}`;
+      const parentResult = results.find(
+        (result) => result.productId === update.productId,
+      );
+      if (parentResult) {
+        parentResult.ok = false;
+        parentResult.error = parentResult.error
+          ? `${parentResult.error} | ${error}`
+          : error;
+      }
+      await markProductOlistSyncFailed(update.product, {
+        ...record,
+        erros: [{ erro: error }],
       });
     }
   }
@@ -978,6 +1100,54 @@ function chunks<T>(items: T[], size: number) {
     result.push(items.slice(index, index + size));
   }
   return result;
+}
+
+function variantImageUpdateCount(products: OlistSyncProduct[]) {
+  return products.reduce(
+    (total, product) =>
+      total +
+      (product.variants ?? []).filter(
+        (variant) => variant.olist_variant_id && variant.images?.length,
+      ).length,
+    0,
+  );
+}
+
+function imageBatchApiCalls(products: OlistSyncProduct[], batchSize: number) {
+  return 1 + Math.ceil(variantImageUpdateCount(products) / batchSize);
+}
+
+function imageSyncBatches(
+  products: OlistSyncProduct[],
+  batchSize: number,
+  maxCallsPerMinute: number,
+) {
+  const batches: OlistSyncProduct[][] = [];
+  let current: OlistSyncProduct[] = [];
+
+  for (const product of products) {
+    const candidate = [...current, product];
+    if (
+      current.length > 0 &&
+      (candidate.length > batchSize ||
+        imageBatchApiCalls(candidate, batchSize) > maxCallsPerMinute)
+    ) {
+      batches.push(current);
+      current = [product];
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current.length > 0) {
+    batches.push(current);
+  }
+
+  return batches;
+}
+
+function sleep(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function needsOlistClassConversion(product: OlistSyncProduct) {
@@ -998,6 +1168,98 @@ export type OlistSendResult = {
   deferredProducts: number;
   errors: string[];
 };
+
+export type OlistImageSyncResult = {
+  skipped: boolean;
+  selected: number;
+  blocked: number;
+  synced: number;
+  failed: number;
+  errors: string[];
+  message: string;
+};
+
+export async function syncOlistImagesV2({
+  limit = 20,
+  all = false,
+  onlyFailed = false,
+}: { limit?: number; all?: boolean; onlyFailed?: boolean } = {}): Promise<OlistImageSyncResult> {
+  const [settings, stockMinQuantity] = await Promise.all([
+    getOlistSettings(),
+    getOlistPublicationStockMinQuantity(),
+  ]);
+  const safeLimit = Math.max(1, Math.min(20, Math.trunc(limit)));
+  const candidates = await listProductsForOlistSync(all ? undefined : safeLimit);
+  const products = candidates.filter(
+    (product) =>
+      Boolean(product.olist_product_id) &&
+      (!onlyFailed || product.olist_sync_status === "failed") &&
+      validateOlistProduct(product).length === 0,
+  );
+  const considered = onlyFailed
+    ? candidates.filter((product) => product.olist_sync_status === "failed")
+    : candidates;
+  const blocked = considered.length - products.length;
+
+  if (products.length === 0) {
+    return {
+      skipped: true,
+      selected: considered.length,
+      blocked,
+      synced: 0,
+      failed: 0,
+      errors: [],
+      message: "Nenhum produto mapeado esta pendente para importar imagens.",
+    };
+  }
+
+  const batches = imageSyncBatches(
+    products,
+    settings.batchSize,
+    settings.batchCallsPerMinute,
+  );
+  const results: Array<{ productId: string; ok: boolean; error?: string }> = [];
+  let windowStartedAt = Date.now();
+  let callsInWindow = 0;
+
+  for (const batch of batches) {
+    const requiredCalls = imageBatchApiCalls(batch, settings.batchSize);
+    const elapsed = Date.now() - windowStartedAt;
+    if (elapsed >= 60_000) {
+      windowStartedAt = Date.now();
+      callsInWindow = 0;
+    } else if (callsInWindow > 0 && callsInWindow + requiredCalls > settings.batchCallsPerMinute) {
+      await sleep(60_000 - elapsed);
+      windowStartedAt = Date.now();
+      callsInWindow = 0;
+    }
+
+    results.push(
+      ...(await sendTinyProductBatch({
+        products: batch,
+        settings,
+        stockMinQuantity,
+        isUpdate: true,
+        includeVariations: false,
+      })),
+    );
+    callsInWindow += requiredCalls;
+  }
+  const errors = results
+    .filter((result) => !result.ok)
+    .map((result) => `${result.productId}: ${result.error ?? "falha desconhecida"}`);
+  const synced = results.filter((result) => result.ok).length;
+
+  return {
+    skipped: false,
+    selected: considered.length,
+    blocked,
+    synced,
+    failed: errors.length,
+    errors: errors.slice(0, 10),
+    message: `${synced} produto(s) atualizados com anexos; ${blocked} bloqueado(s); ${errors.length} falha(s).`,
+  };
+}
 
 export async function executeOlistSync({
   actorUserId,
@@ -1150,17 +1412,32 @@ export async function executeOlistSync({
   const createBatches = chunks(
     plan.eligibleProductsList.filter((product) => !product.olist_product_id),
     settings.batchSize,
-  ).map((batch) => ({ batch, isUpdate: false, requiresClassConversion: false, apiCalls: 1 }));
+  ).map((batch) => ({
+    batch,
+    isUpdate: false,
+    requiresClassConversion: false,
+    apiCalls: imageBatchApiCalls(batch, settings.batchSize),
+  }));
   const regularUpdateBatches = chunks(
     plan.eligibleProductsList.filter(
       (product) => product.olist_product_id && !needsOlistClassConversion(product),
     ),
     settings.batchSize,
-  ).map((batch) => ({ batch, isUpdate: true, requiresClassConversion: false, apiCalls: 1 }));
+  ).map((batch) => ({
+    batch,
+    isUpdate: true,
+    requiresClassConversion: false,
+    apiCalls: imageBatchApiCalls(batch, settings.batchSize),
+  }));
   const conversionBatches = chunks(
     plan.eligibleProductsList.filter(needsOlistClassConversion),
     settings.batchSize,
-  ).map((batch) => ({ batch, isUpdate: true, requiresClassConversion: true, apiCalls: 2 }));
+  ).map((batch) => ({
+    batch,
+    isUpdate: true,
+    requiresClassConversion: true,
+    apiCalls: 2 + Math.ceil(variantImageUpdateCount(batch) / settings.batchSize),
+  }));
   const allBatches = [...createBatches, ...conversionBatches, ...regularUpdateBatches];
   let selectedApiCalls = 0;
   const selectedBatches = allBatches.filter((entry) => {
@@ -1215,6 +1492,7 @@ export async function executeOlistSync({
           settings,
           stockMinQuantity,
           isUpdate: entry.requiresClassConversion ? false : entry.isUpdate,
+          includeVariations: entry.requiresClassConversion || !entry.isUpdate,
         })),
       );
     }
@@ -1294,10 +1572,13 @@ export async function runScheduledOlistSyncIfDue() {
     return { skipped: true, reason: "Outra rotina assumiu esta janela ou ainda nao chegou o horario." };
   }
 
-  const result =
-    settings.autoSyncMode === "send"
-      ? await executeOlistSync({ triggerSource: "schedule" })
-      : await simulateOlistSync({
+  const shouldSend = settings.autoSyncMode === "send";
+  const imageResult = shouldSend
+    ? null
+    : await syncOlistImagesV2({ limit: settings.batchSize });
+  const result = shouldSend
+    ? await executeOlistSync({ triggerSource: "schedule" })
+    : await simulateOlistSync({
           triggerSource: "schedule",
           saveRun: true,
         });
@@ -1314,6 +1595,7 @@ export async function runScheduledOlistSyncIfDue() {
   return {
     skipped: false,
     result,
+    imageResult,
     nextAutoSyncAfter:
       claimedNextRun instanceof Date
         ? claimedNextRun.toISOString()
@@ -1373,6 +1655,7 @@ export async function syncCatalogProductToOlistIfEnabled(productId: string) {
     settings,
     stockMinQuantity,
     isUpdate: isUpdate && !needsOlistClassConversion(product),
+    includeVariations: !isUpdate || needsOlistClassConversion(product),
   });
   const result = results[0];
 

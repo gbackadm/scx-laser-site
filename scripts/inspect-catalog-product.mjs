@@ -55,6 +55,28 @@ try {
         sp.raw_category,
         sp.raw_image_urls,
         sp.raw_payload,
+        (
+          SELECT coalesce(
+            json_agg(
+              json_build_object(
+                'id', variant.id,
+                'name', variant.name,
+                'scx_sku', variant.scx_sku,
+                'attributes', variant.attributes,
+                'images', coalesce(variant_images.items, '[]'::json)
+              )
+              ORDER BY variant.sort_order, variant.name
+            ),
+            '[]'::json
+          )
+          FROM scx_catalog_product_variants variant
+          LEFT JOIN LATERAL (
+            SELECT json_agg(image.url ORDER BY image.sort_order, image.id) AS items
+            FROM scx_catalog_product_variant_images image
+            WHERE image.variant_id = variant.id
+          ) variant_images ON true
+          WHERE variant.product_id = p.id
+        ) AS variants,
         coalesce(
           json_agg(
             json_build_object(

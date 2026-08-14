@@ -4,16 +4,21 @@ import { runScheduledAsiaImportSyncIfDue } from "@/domain/suppliers/asiaImportRe
 
 function hasCronAccess(request: Request) {
   const configuredSecret =
-    process.env.ASIA_IMPORT_CRON_SECRET ?? process.env.OLIST_CRON_SECRET;
+    process.env.CRON_SECRET ??
+    process.env.ASIA_IMPORT_CRON_SECRET ??
+    process.env.OLIST_CRON_SECRET;
 
   if (!configuredSecret) {
     return false;
   }
 
-  return request.headers.get("x-asia-cron-secret") === configuredSecret;
+  return (
+    request.headers.get("authorization") === `Bearer ${configuredSecret}` ||
+    request.headers.get("x-asia-cron-secret") === configuredSecret
+  );
 }
 
-export async function POST(request: Request) {
+async function runCron(request: Request) {
   if (!hasCronAccess(request)) {
     return NextResponse.json(
       { ok: false, message: "Rotina Asia Import nao autorizada." },
@@ -37,3 +42,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const maxDuration = 300;
+
+export const GET = runCron;
+export const POST = runCron;

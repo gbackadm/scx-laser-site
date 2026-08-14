@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildTinyProduct,
+  buildTinyVariantImageUpdate,
   productShouldBeActive,
   validateOlistProduct,
 } from "./core.js";
@@ -41,6 +42,7 @@ function validProduct() {
         stock_quantity: 1200,
         attributes: { Cor: "Azul" },
         is_active: true,
+        images: [{ url: "https://example.com/caneta-azul.jpg" }],
       },
     ],
     components: [],
@@ -54,7 +56,7 @@ test("monta produto pai com variacoes oficiais do Tiny", () => {
 
   assert.deepEqual(validateOlistProduct(product), []);
   assert.equal(sent.produto.classe_produto, "V");
-  assert.equal(sent.produto.nome, "Caneta metalica");
+  assert.equal(sent.produto.nome, "Caneta metalica FORN-1");
   assert.ok(!sent.produto.nome.includes("SCX-CAN-0001"));
   assert.equal(sent.produto.preco, "49.90");
   assert.deepEqual(sent.produto.variacoes, [
@@ -68,6 +70,33 @@ test("monta produto pai com variacoes oficiais do Tiny", () => {
     },
   ]);
   assert.equal(sent.variants[0].variantId, "variant-1");
+  assert.deepEqual(sent.produto.anexos, [
+    { anexo: "https://example.com/caneta.jpg" },
+    { anexo: "https://example.com/caneta-azul.jpg" },
+  ]);
+  assert.equal(sent.produto.imagens_externas, undefined);
+});
+
+test("monta atualizacao de imagem para o id individual da variacao", () => {
+  const product = validProduct();
+  const update = buildTinyVariantImageUpdate(
+    product,
+    product.variants[0],
+    "901",
+    "2",
+    1,
+    1000,
+  );
+
+  assert.equal(update.produto.id, "901");
+  assert.equal(update.produto.codigo, "SCX-CAN-0001-AZ");
+  assert.equal(update.produto.nome, "Caneta metalica FORN-1 - Azul");
+  assert.equal(update.produto.estoque_atual, 1200);
+  assert.deepEqual(update.produto.grade, { Cor: "Azul" });
+  assert.deepEqual(update.produto.anexos, [
+    { anexo: "https://example.com/caneta-azul.jpg" },
+  ]);
+  assert.equal(update.produto.imagens_externas, undefined);
 });
 
 test("inclui id externo da variacao nas atualizacoes", () => {
@@ -84,6 +113,7 @@ test("inclui id externo da variacao nas atualizacoes", () => {
 test("bloqueia grades repetidas e produtos sem foto", () => {
   const product = validProduct();
   product.images = [];
+  product.variants[0].images = [];
   product.variants.push({
     ...product.variants[0],
     id: "variant-2",
@@ -97,12 +127,31 @@ test("bloqueia grades repetidas e produtos sem foto", () => {
   assert.ok(reasons.includes("grade de variacao repetida"));
 });
 
+test("bloqueia variacao ativa sem imagem propria", () => {
+  const product = validProduct();
+  product.variants[0].images = [];
+
+  assert.ok(validateOlistProduct(product).includes("variacao sem imagem"));
+});
+
 test("mantem produto abaixo de 1000 como inativo", () => {
   const product = validProduct();
   product.stock_quantity = 999;
 
   assert.equal(productShouldBeActive(product, 1000), false);
   assert.equal(buildTinyProduct(product, "2", 1, false, 1000).produto.situacao, "I");
+});
+
+test("normaliza dimensoes do produto em caixa", () => {
+  const product = validProduct();
+  product.raw_payload.altura = 0;
+  product.raw_payload.largura = 0;
+  product.raw_payload.comprimento = 0;
+  product.raw_payload.propriedades = {
+    "dimensao-do-produto-caixa": "10,8x14,6x17,6cm",
+  };
+
+  assert.deepEqual(validateOlistProduct(product), []);
 });
 
 test("bloqueia variacoes com nomes de grade diferentes", () => {

@@ -89,6 +89,7 @@ export function parseProductDimensions(rawPayload) {
   const measure = rawAttribute(rawPayload, [
     "medidas-do-produto",
     "medida-do-produto",
+    "dimensao-do-produto-caixa",
     "dimensao-do-produto",
     "dimensao-produto",
     "dimensoes-do-produto",
@@ -151,9 +152,17 @@ export function buildCategoryTree(product, rawPayload) {
 }
 
 export function buildProductName(product) {
-  return buildMarketplaceTitle(product.title, "olist", {
+  const marketplaceTitle = buildMarketplaceTitle(product.title, "olist", {
     identifiers: [product.scx_sku, product.sku, product.external_id],
   });
+  const model = String(product.external_id ?? product.sku ?? "").trim();
+
+  return truncate(
+    model && !marketplaceTitle.toLocaleLowerCase("pt-BR").includes(model.toLocaleLowerCase("pt-BR"))
+      ? `${marketplaceTitle} ${model}`
+      : marketplaceTitle,
+    120,
+  );
 }
 
 export function buildProductionSteps(product) {
@@ -200,6 +209,23 @@ function normalizedVariantGrade(attributes) {
   );
 }
 
+function uniqueImageUrls(images, limit = 10) {
+  return Array.from(
+    new Set(
+      (Array.isArray(images) ? images : [])
+        .map((image) => String(image?.url ?? "").trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, limit);
+}
+
+function parentImageUrls(product) {
+  return uniqueImageUrls([
+    ...(product.images ?? []),
+    ...(product.variants ?? []).flatMap((variant) => variant.images ?? []),
+  ]);
+}
+
 function buildTinyVariations(product, isUpdate) {
   const variants = Array.isArray(product.variants) ? product.variants : [];
 
@@ -223,6 +249,7 @@ function buildTinyVariations(product, isUpdate) {
           variantId: variant.id,
           scxSku: variant.scx_sku,
           supplierSku: variant.supplier_sku,
+          olistVariantId: variant.olist_variant_id ?? null,
         },
       };
     });
@@ -266,7 +293,7 @@ export function validateOlistProduct(product) {
   ) {
     reasons.push("sem medidas normalizadas");
   }
-  if (!Array.isArray(product.images) || product.images.length === 0) {
+  if (parentImageUrls(product).length === 0) {
     reasons.push("sem imagem");
   }
   if (!product.olist_supplier_id) {
@@ -315,6 +342,9 @@ export function validateOlistProduct(product) {
     if (new Set(gradeSchemas).size > 1) {
       reasons.push("variacoes com estruturas de grade diferentes");
     }
+    if (activeVariants.some((variant) => uniqueImageUrls(variant.images).length === 0)) {
+      reasons.push("variacao sem imagem");
+    }
   }
 
   return reasons;
@@ -347,8 +377,7 @@ export function buildTinyProduct(
   )
     .replace(/\D/g, "")
     .slice(0, 3);
-  const allImageUrls = product.images.map((image) => image.url).filter(Boolean);
-  const externalImageUrls = allImageUrls.slice(0, 10);
+  const attachmentImageUrls = parentImageUrls(product);
   const description = product.description ?? product.title;
   const structureItems = buildStructureItems(product);
   const tinyVariations = buildTinyVariations(product, isUpdate);
@@ -419,9 +448,7 @@ export function buildTinyProduct(
     comprimento_embalagem: formatDecimal(productMeasure.length, 2),
     diametro_embalagem: formatDecimal(productMeasure.diameter, 2),
     dias_preparacao: "3",
-    imagens_externas: externalImageUrls.map((url) => ({
-      imagem_externa: { url },
-    })),
+    anexos: attachmentImageUrls.map((url) => ({ anexo: url })),
     variacoes:
       options.includeVariations !== false && tinyVariations.length > 0
         ? tinyVariations.map(({ variacao }) => ({ variacao }))
@@ -446,6 +473,47 @@ export function buildTinyProduct(
     supplierSku,
     productId: product.id,
     variants: tinyVariations.map(({ mapping }) => mapping),
+  };
+}
+
+export function buildTinyVariantImageUpdate(
+  product,
+  variant,
+  externalId,
+  origin,
+  sequence,
+  stockMinQuantity,
+) {
+  const imageUrls = uniqueImageUrls(variant.images);
+  const productName = buildProductName(product);
+  const variantName = String(variant.name ?? "").trim();
+  const gradeLabel = Object.values(normalizedVariantGrade(variant.attributes)).join(" / ");
+  const fullVariantName = variantName
+    .toLocaleLowerCase("pt-BR")
+    .startsWith(productName.toLocaleLowerCase("pt-BR"))
+    ? variantName
+    : `${productName} - ${gradeLabel || variantName || variant.scx_sku}`;
+
+  return {
+    productId: product.id,
+    variantId: variant.id,
+    produto: {
+      sequencia: String(sequence),
+      id: String(externalId),
+      codigo: truncate(variant.scx_sku, 30),
+      nome: truncate(fullVariantName, 120),
+      unidade: "UN",
+      preco: toMoney(variant.price_amount_in_cents),
+      estoque_atual: variant.is_active ? variant.stock_quantity : 0,
+      origem: String(origin),
+      situacao:
+        variant.is_active && productShouldBeActive(product, stockMinQuantity)
+          ? "A"
+          : "I",
+      tipo: "P",
+      grade: normalizedVariantGrade(variant.attributes),
+      anexos: imageUrls.map((url) => ({ anexo: url })),
+    },
   };
 }
 

@@ -7,6 +7,7 @@ import { CatalogDeleteButton } from "@/components/admin/CatalogDeleteButton";
 import { CatalogEditModal } from "@/components/admin/CatalogEditModal";
 import { CatalogSyncButton } from "@/components/admin/CatalogSyncButton";
 import { CatalogStatusSelect } from "@/components/admin/CatalogStatusSelect";
+import { OlistProductSyncButton } from "@/components/admin/OlistProductSyncButton";
 import type {
   AdminProductBatchPrice,
   AdminProduct,
@@ -524,7 +525,7 @@ export function CatalogPanel({
                 />
               </div>
 
-              <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              <div className="mt-4 grid gap-2 sm:grid-cols-4">
                 <button
                   type="button"
                   onClick={() => setEditingProduct(product)}
@@ -554,6 +555,9 @@ export function CatalogPanel({
                       }
                     }}
                   />
+                ) : null}
+                {canEdit ? (
+                  <OlistProductSyncButton productId={product.catalogId} />
                 ) : null}
                 {canEdit ? (
                   <CatalogDeleteButton
@@ -730,6 +734,9 @@ export function CatalogPanel({
                           }
                         }}
                       />
+                    ) : null}
+                    {canEdit ? (
+                      <OlistProductSyncButton productId={product.catalogId} />
                     ) : null}
                     {canEdit ? (
                       <CatalogDeleteButton

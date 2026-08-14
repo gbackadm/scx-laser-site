@@ -119,10 +119,10 @@ Dados gerais do Tiny/Olist recebem os campos operacionais:
 - Peso liquido e bruto.
 - Tipo e medidas de embalagem.
 - Dias de preparacao.
-- Imagens externas por URL. Nao usar `anexos` no envio em massa, porque o
-  Tiny/Olist pode rejeitar imagens baixadas acima de 2 MB.
-- Enviar no maximo 10 URLs de imagens externas por produto, limite aceito pelo
-  Tiny/Olist.
+- Imagens importadas por URL usando `anexos`, para que aparecam na biblioteca
+  interna do produto e possam ser vinculadas as variacoes.
+- Enviar no maximo 10 anexos por produto. URLs inacessiveis ou arquivos rejeitados
+  pela Olist devem gerar erro na rotina.
 - SEO.
 
 ## Categoria

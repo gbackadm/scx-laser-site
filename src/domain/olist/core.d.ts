@@ -104,7 +104,20 @@ export function buildTinyProduct(
     variantId: string;
     scxSku: string;
     supplierSku: string;
+    olistVariantId: string | null;
   }>;
+};
+export function buildTinyVariantImageUpdate(
+  product: OlistSyncProduct,
+  variant: OlistProductVariant,
+  externalId: string | number,
+  origin: string | number,
+  sequence: number,
+  stockMinQuantity: number,
+): {
+  productId: string;
+  variantId: string;
+  produto: Record<string, unknown>;
 };
 export function summarizeOlistPlan(
   products: OlistSyncProduct[],
