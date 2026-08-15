@@ -11,6 +11,7 @@ type Candidate = {
   scxSku: string;
   title: string;
   category: string;
+  imageUrl: string | null;
   variantCount: number;
   publishedVariants: number;
   draftStatus: string | null;
@@ -133,12 +134,15 @@ export function MercadoLivrePublishPanel({
         </Link>
       </div>
 
-      <div className="grid gap-4 border-b border-white/10 py-5 lg:grid-cols-[1fr_auto] lg:items-end">
-        <label className="grid gap-2 text-sm font-bold text-zinc-300">
+      <div className="grid gap-4 border-b border-white/10 py-5 lg:grid-cols-[5rem_minmax(0,1fr)_auto] lg:items-end">
+        <div className="h-20 w-20 overflow-hidden rounded border border-white/10 bg-white">
+          {selected?.imageUrl ? <img src={selected.imageUrl} alt={selected.title} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center text-zinc-400"><Images size={22} /></div>}
+        </div>
+        <label className="grid min-w-0 gap-2 text-sm font-bold text-zinc-300">
           Produto
           <select
             value={productId}
-            disabled={isPending || selected?.profileStatus !== "reviewed"}
+            disabled={isPending}
             onChange={(event) => {
               setProductId(event.target.value);
               setDraft(null);
@@ -148,17 +152,24 @@ export function MercadoLivrePublishPanel({
             }}
             className="h-11 rounded border border-white/15 bg-black px-3 text-white outline-none focus:border-laser"
           >
-            {candidates.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.scxSku} - {candidate.title} ({candidate.variantCount} variacoes){candidate.profileStatus !== "reviewed" ? " - categoria nao configurada" : ""}
-              </option>
+            {[...new Set(candidates.map((candidate) => candidate.category))].map((category) => (
+              <optgroup key={category} label={category}>
+                {candidates.filter((candidate) => candidate.category === category).map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.scxSku} - {candidate.title} ({candidate.variantCount} variacoes){candidate.profileStatus !== "reviewed" ? " - categoria nao configurada" : ""}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
+          <span className={`text-xs ${selected?.profileStatus === "reviewed" ? "text-emerald-300" : "text-amber-200"}`}>
+            {selected?.profileStatus === "reviewed" ? `${selected.category} pronta para simulacao` : `${selected?.category ?? "Categoria"} ainda nao configurada para o Mercado Livre`}
+          </span>
         </label>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={isPending}
+            disabled={isPending || selected?.profileStatus !== "reviewed"}
             onClick={() => run("/admin/api/mercado-livre/rascunho", { productId })}
             className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-white/15 px-4 text-sm font-black text-zinc-200 hover:border-white/30 disabled:text-zinc-600"
           >

@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, LoaderCircle, Pause, Play, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { ExternalLink, Link2, LoaderCircle, Pause, Play, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
@@ -37,6 +37,8 @@ function actionTitle(action: ListingAction) {
 export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMercadoLivreListing[] }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
+  const [product, setProduct] = useState("all");
+  const [kit, setKit] = useState("all");
   const [status, setStatus] = useState("all");
   const [selectedId, setSelectedId] = useState(listings[0]?.itemId ?? "");
   const [pendingAction, setPendingAction] = useState<ListingAction | null>(null);
@@ -44,14 +46,26 @@ export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMerca
   const [message, setMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  const productOptions = useMemo(() => {
+    const unique = new Map<string, string>();
+    listings.forEach((listing) => unique.set(listing.groupKey, listing.groupLabel));
+    return [...unique].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  }, [listings]);
+  const kitOptions = useMemo(() => [...new Set(listings
+    .filter((listing) => product === "all" || listing.groupKey === product)
+    .map((listing) => listing.unitsPerPack)
+    .filter((value): value is number => value !== null))].sort((a, b) => a - b), [listings, product]);
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase("pt-BR");
     return listings.filter((listing) => {
       const matchesStatus = status === "all" || listing.status === status;
+      const matchesProduct = product === "all" || listing.groupKey === product;
+      const matchesKit = kit === "all" || listing.unitsPerPack === Number(kit);
       const searchable = `${listing.title} ${listing.productTitle} ${listing.productSku} ${listing.externalSku} ${listing.itemId} ${listing.variation}`.toLocaleLowerCase("pt-BR");
-      return matchesStatus && (!needle || searchable.includes(needle));
+      return matchesStatus && matchesProduct && matchesKit && (!needle || searchable.includes(needle));
     });
-  }, [listings, query, status]);
+  }, [listings, query, product, kit, status]);
 
   const selected = filtered.find((listing) => listing.itemId === selectedId) ?? filtered[0] ?? null;
   const counts = listings.reduce<Record<string, number>>((result, listing) => {
@@ -82,16 +96,30 @@ export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMerca
   }
 
   if (!listings.length) {
-    return <p className="border-y border-white/10 py-8 text-sm text-zinc-400">Nenhum anuncio publicado pela aplicacao ainda.</p>;
+    return <p className="border-y border-white/10 py-8 text-sm text-zinc-400">Nenhum anuncio encontrado na conta Mercado Livre conectada.</p>;
   }
 
   return (
     <section>
-      <div className="grid gap-4 border-b border-white/10 pb-5 sm:grid-cols-[1fr_13rem_auto]">
+      <div className="grid gap-3 border-b border-white/10 pb-5 md:grid-cols-2 xl:grid-cols-[minmax(14rem,1fr)_minmax(13rem,0.8fr)_10rem_11rem_auto]">
         <label className="relative block">
           <span className="sr-only">Buscar anuncios</span>
           <Search className="pointer-events-none absolute left-3 top-3.5 text-zinc-500" size={17} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por produto, SKU ou ID" className="h-11 w-full rounded border border-white/15 bg-black pl-10 pr-3 text-sm text-white outline-none focus:border-laser" />
+        </label>
+        <label>
+          <span className="sr-only">Filtrar por produto</span>
+          <select value={product} onChange={(event) => { setProduct(event.target.value); setKit("all"); }} className="h-11 w-full rounded border border-white/15 bg-black px-3 text-sm font-bold text-white outline-none focus:border-laser">
+            <option value="all">Todos os produtos ({productOptions.length})</option>
+            {productOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label>
+          <span className="sr-only">Filtrar por kit</span>
+          <select value={kit} onChange={(event) => setKit(event.target.value)} className="h-11 w-full rounded border border-white/15 bg-black px-3 text-sm font-bold text-white outline-none focus:border-laser">
+            <option value="all">Todos os kits</option>
+            {kitOptions.map((value) => <option key={value} value={value}>Kit {value}</option>)}
+          </select>
         </label>
         <label>
           <span className="sr-only">Filtrar por status</span>
@@ -107,6 +135,7 @@ export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMerca
           <RefreshCw size={17} className={isPending ? "animate-spin" : ""} />
         </button>
       </div>
+      <p className="border-b border-white/10 py-3 text-xs font-bold text-zinc-500">{filtered.length} de {listings.length} anuncios | {productOptions.length} produtos ou familias</p>
 
       <div className="grid min-h-[34rem] lg:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
         <div className="overflow-x-auto border-b border-white/10 lg:border-b-0 lg:border-r">
@@ -120,10 +149,10 @@ export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMerca
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-3">
                       {listing.imageUrl ? <img src={listing.imageUrl} alt="" className="h-12 w-12 shrink-0 rounded border border-white/10 bg-white object-contain" /> : <div className="h-12 w-12 shrink-0 rounded border border-white/10 bg-zinc-900" />}
-                      <div className="min-w-0"><p className="max-w-xs truncate font-black text-zinc-100">{listing.productTitle}</p><p className="mt-1 text-xs text-zinc-500">{listing.itemId}</p></div>
+                      <div className="min-w-0"><p className="max-w-xs truncate font-black text-zinc-100">{listing.productTitle}</p><p className="mt-1 text-xs text-zinc-500">{listing.itemId}</p><span className={`mt-1 inline-flex rounded px-1.5 py-0.5 text-[10px] font-black uppercase ${listing.linkedToCatalog ? "bg-emerald-400/10 text-emerald-200" : "bg-sky-400/10 text-sky-200"}`}>{listing.linkedToCatalog ? "Catalogo SCX" : "Somente no ML"}</span></div>
                     </div>
                   </td>
-                  <td className="px-3 py-3"><p className="font-bold text-zinc-300">{listing.variation}</p><p className="mt-1 text-xs text-zinc-500">Kit {listing.unitsPerPack}</p></td>
+                  <td className="px-3 py-3"><p className="font-bold text-zinc-300">{listing.variation}</p><p className="mt-1 text-xs text-zinc-500">{listing.unitsPerPack ? `Kit ${listing.unitsPerPack}` : "Kit nao identificado"}</p></td>
                   <td className="px-3 py-3 font-black">{money.format(listing.price)}</td>
                   <td className="px-3 py-3 font-bold">{listing.availableQuantity}</td>
                   <td className="px-3 py-3"><span className={`inline-flex rounded px-2 py-1 text-xs font-black ${statusStyles[listing.status] ?? "bg-zinc-800 text-zinc-300"}`}>{statusLabels[listing.status] ?? listing.status}</span></td>
@@ -139,7 +168,8 @@ export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMerca
             {selected.imageUrl ? <img src={selected.imageUrl} alt={selected.title} className="aspect-square w-full max-w-sm bg-white object-contain" /> : null}
             <p className="mt-5 text-xs font-black uppercase text-laser">{selected.itemId}</p>
             <h2 className="mt-2 text-lg font-black leading-6">{selected.title}</h2>
-            <p className="mt-2 text-sm text-zinc-400">{selected.variation} | Kit {selected.unitsPerPack}</p>
+            <p className="mt-2 text-sm text-zinc-400">{selected.variation} | {selected.unitsPerPack ? `Kit ${selected.unitsPerPack}` : "Kit nao identificado"}</p>
+            <p className={`mt-2 inline-flex items-center gap-1.5 text-xs font-black ${selected.linkedToCatalog ? "text-emerald-300" : "text-sky-300"}`}><Link2 size={13} /> {selected.linkedToCatalog ? "Vinculado ao catalogo SCX" : "Anuncio da conta ainda sem vinculo SCX"}</p>
             <dl className="mt-5 divide-y divide-white/10 border-y border-white/10 text-sm">
               <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Preco</dt><dd className="font-black">{money.format(selected.price)}</dd></div>
               <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Estoque</dt><dd className="font-black">{selected.availableQuantity} kits</dd></div>

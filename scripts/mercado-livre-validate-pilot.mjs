@@ -20,20 +20,22 @@ if (existsSync(".env.local")) {
   }
 }
 
+const skuArgumentIndex = process.argv.indexOf("--sku");
+const sku = skuArgumentIndex >= 0 ? process.argv[skuArgumentIndex + 1] : "SCX-CAN-0021";
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 
 try {
   const [account, product, variants, images] = await Promise.all([
     pool.query(`SELECT encrypted_access_token FROM scx_mercado_livre_accounts WHERE status='active' ORDER BY updated_at DESC LIMIT 1`),
-    pool.query(`SELECT p.id, p.sku, sp.external_id, sp.raw_payload FROM scx_catalog_products p LEFT JOIN scx_catalog_supplier_products sp ON sp.id=p.supplier_product_id WHERE p.scx_sku='SCX-CAN-0021' LIMIT 1`),
+    pool.query(`SELECT p.id, p.sku, sp.external_id, sp.raw_payload FROM scx_catalog_products p LEFT JOIN scx_catalog_supplier_products sp ON sp.id=p.supplier_product_id WHERE p.scx_sku=$1 OR p.sku=$1 LIMIT 1`, [sku]),
     pool.query(`SELECT v.id, v.scx_sku, v.cost_amount_in_cents, v.stock_quantity, v.attributes,
       COALESCE(array_agg(i.url ORDER BY i.sort_order, i.id) FILTER (WHERE i.id IS NOT NULL), '{}'::text[]) images
       FROM scx_catalog_product_variants v LEFT JOIN scx_catalog_product_variant_images i ON i.variant_id=v.id
-      JOIN scx_catalog_products p ON p.id=v.product_id WHERE p.scx_sku='SCX-CAN-0021' AND v.is_active=true
-      GROUP BY v.id ORDER BY v.sort_order, v.id`),
-    pool.query(`SELECT i.url FROM scx_catalog_product_images i JOIN scx_catalog_products p ON p.id=i.product_id WHERE p.scx_sku='SCX-CAN-0021' ORDER BY i.sort_order, i.id`),
+      JOIN scx_catalog_products p ON p.id=v.product_id WHERE (p.scx_sku=$1 OR p.sku=$1) AND v.is_active=true
+      GROUP BY v.id ORDER BY v.sort_order, v.id`, [sku]),
+    pool.query(`SELECT i.url FROM scx_catalog_product_images i JOIN scx_catalog_products p ON p.id=i.product_id WHERE p.scx_sku=$1 OR p.sku=$1 ORDER BY i.sort_order, i.id`, [sku]),
   ]);
-  if (!account.rows[0] || !product.rows[0]) throw new Error("Conta ou produto piloto ausente.");
+  if (!account.rows[0] || !product.rows[0]) throw new Error(`Conta ou produto ${sku} ausente.`);
   const properties = product.rows[0].raw_payload?.propriedades ?? {};
   const dimensions = String(properties["dimensao-caixa"] ?? "").replace(/,/g, ".").match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
   const masterUnits = Number.parseInt(String(properties["quant-por-caixa"] ?? ""), 10);

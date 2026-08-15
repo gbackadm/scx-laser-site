@@ -15,7 +15,8 @@ if (existsSync(".env.local")) {
   }
 }
 
-const sku = process.argv[process.argv.indexOf("--sku") + 1] || "GA5100";
+const skuArgumentIndex = process.argv.indexOf("--sku");
+const sku = skuArgumentIndex >= 0 ? process.argv[skuArgumentIndex + 1] : "GA5100";
 const includeDetails = process.argv.includes("--details");
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 const numberFrom = (value) => Number(String(value ?? "").replace(",", ".").match(/\d+(?:\.\d+)?/)?.[0] ?? 0);

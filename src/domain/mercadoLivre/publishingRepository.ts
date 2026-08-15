@@ -127,6 +127,13 @@ function confirmedUnitPack(rawPayload: Record<string, unknown> | null | undefine
 export async function listMercadoLivreCandidates() {
   const result = await getDatabasePool().query(
     `SELECT p.id, p.scx_sku, p.title, category.name AS category,
+            COALESCE(
+              (SELECT image.url FROM scx_catalog_product_images image WHERE image.product_id=p.id AND btrim(image.url) <> '' ORDER BY image.sort_order, image.id LIMIT 1),
+              (SELECT image.url FROM scx_catalog_product_variant_images image
+                INNER JOIN scx_catalog_product_variants image_variant ON image_variant.id=image.variant_id
+                WHERE image_variant.product_id=p.id AND image_variant.is_active=true AND btrim(image.url) <> ''
+                ORDER BY image_variant.sort_order, image.sort_order, image.id LIMIT 1)
+            ) AS image_url,
             count(DISTINCT variant.id)::int AS variant_count,
             count(DISTINCT offer.id) FILTER (WHERE offer.external_id IS NOT NULL)::int AS published_variants,
             draft.status AS draft_status,
@@ -149,6 +156,7 @@ export async function listMercadoLivreCandidates() {
     scxSku: String(row.scx_sku),
     title: String(row.title),
     category: String(row.category),
+    imageUrl: row.image_url ? String(row.image_url) : null,
     variantCount: Number(row.variant_count),
     publishedVariants: Number(row.published_variants),
     draftStatus: row.draft_status ? String(row.draft_status) : null,
