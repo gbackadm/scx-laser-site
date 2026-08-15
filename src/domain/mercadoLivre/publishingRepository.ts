@@ -26,6 +26,7 @@ import {
   createMercadoLivreDescription,
   createMercadoLivreItem,
   mercadoLivreRequest,
+  uploadMercadoLivrePicture,
   validateMercadoLivreItem,
 } from "@/domain/mercadoLivre/client";
 import { getMercadoLivreConnection } from "@/domain/mercadoLivre/repository";
@@ -52,6 +53,7 @@ export type MercadoLivreDraftPayload = {
   unitPriceInCents: number;
   productCostInCents: number;
   description: string;
+  selectedForPublishing?: boolean;
   readinessErrors?: string[];
   contentReadiness?: {
     score: number;
@@ -85,6 +87,14 @@ export type MercadoLivreDraftPayload = {
   body: Record<string, unknown>;
 };
 
+export type MercadoLivreMediaAsset = {
+  id: string;
+  url: string;
+  owner: "product" | "variant";
+  variantId: string | null;
+  label: string;
+};
+
 export type MercadoLivreDraft = {
   productId: string;
   categoryId: string;
@@ -96,6 +106,7 @@ export type MercadoLivreDraft = {
   validationResults: unknown[];
   errorMessage: string | null;
   updatedAt: string;
+  mediaLibrary: MercadoLivreMediaAsset[];
 };
 
 function iso(value: Date | string) {
@@ -379,6 +390,17 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
     };
     source = { normalizedProduct, normalizedProfile, packs };
   }
+  for (const payload of generated.payloads) {
+    const body = payload.body as { pictures?: Array<{ source?: string }> };
+    const variant = variants.find((item) => item.id === payload.variantId);
+    const orderedSources = [...new Set([
+      images[0],
+      ...(variant?.images ?? []),
+      ...(body.pictures ?? []).map((picture) => picture.source),
+      ...images,
+    ].filter(Boolean) as string[])].slice(0, 12);
+    body.pictures = orderedSources.map((source) => ({ source }));
+  }
   const diagnosticRequests = new Map<string, { source: string; categoryId: string; title: string; pictureType: "thumbnail" | "other" }>();
   for (const payload of generated.payloads) {
     const body = payload.body as { category_id?: string; family_name?: string; pictures?: Array<{ source?: string }> };
@@ -519,6 +541,69 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
   return getMercadoLivreDraft(productId);
 }
 
+export async function listMercadoLivreMediaLibrary(productId: string): Promise<MercadoLivreMediaAsset[]> {
+  const result = await getDatabasePool().query(
+    `SELECT image.id, image.url, 'product' AS owner, NULL::text AS variant_id,
+            'Produto pai' AS label, image.sort_order
+       FROM scx_catalog_product_images image
+      WHERE image.product_id=$1 AND btrim(image.url) <> ''
+      UNION ALL
+     SELECT image.id, image.url, 'variant' AS owner, variant.id AS variant_id,
+            COALESCE(NULLIF(variant.attributes->>'Cor',''), NULLIF(variant.attributes->>'cor',''), variant.scx_sku) AS label,
+            image.sort_order
+       FROM scx_catalog_product_variant_images image
+       INNER JOIN scx_catalog_product_variants variant ON variant.id=image.variant_id
+      WHERE variant.product_id=$1 AND variant.is_active=true AND btrim(image.url) <> ''
+      ORDER BY owner, sort_order, id`,
+    [productId],
+  );
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    url: String(row.url),
+    owner: row.owner === "variant" ? "variant" as const : "product" as const,
+    variantId: row.variant_id ? String(row.variant_id) : null,
+    label: String(row.label),
+  }));
+}
+
+export async function uploadMercadoLivreCatalogImage(productId: string, variantId: string | null, file: File) {
+  if (!file.type.startsWith("image/") || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("Envie uma imagem JPG, PNG ou WebP.");
+  }
+  if (file.size <= 0 || file.size > 10 * 1024 * 1024) throw new Error("A imagem deve ter no maximo 10 MB.");
+  if (variantId) {
+    const variant = await getDatabasePool().query(
+      `SELECT id FROM scx_catalog_product_variants WHERE id=$1 AND product_id=$2 AND is_active=true LIMIT 1`,
+      [variantId, productId],
+    );
+    if (!variant.rowCount) throw new Error("A variacao escolhida nao pertence a este produto.");
+  }
+  const uploaded = await uploadMercadoLivrePicture(file);
+  if (!uploaded.ok || !uploaded.body?.id) throw new Error(`Mercado Livre recusou a imagem (${uploaded.status}).`);
+  const best = [...(uploaded.body.variations ?? [])].sort((a, b) => {
+    const area = (value?: string) => (value?.split("x").map(Number).reduce((x, y) => x * y, 1) ?? 0);
+    return area(b.size) - area(a.size);
+  })[0];
+  const url = best?.secure_url ?? best?.url;
+  if (!url) throw new Error("O Mercado Livre recebeu a imagem, mas nao devolveu uma URL utilizavel.");
+  const pool = getDatabasePool();
+  if (variantId) {
+    await pool.query(
+      `INSERT INTO scx_catalog_product_variant_images (id, variant_id, url, alt_text, sort_order)
+       SELECT $1,$2,$3,$4,COALESCE(MAX(sort_order),-1)+1 FROM scx_catalog_product_variant_images WHERE variant_id=$2`,
+      [randomUUID(), variantId, url, file.name],
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO scx_catalog_product_images (id, product_id, url, alt_text, source, sort_order)
+       SELECT $1,$2,$3,$4,'curated',COALESCE(MAX(sort_order),-1)+1 FROM scx_catalog_product_images WHERE product_id=$2`,
+      [randomUUID(), productId, url, file.name],
+    );
+  }
+  await pool.query(`UPDATE scx_catalog_products SET updated_at=now() WHERE id=$1`, [productId]);
+  return { pictureId: uploaded.body.id, url, mediaLibrary: await listMercadoLivreMediaLibrary(productId) };
+}
+
 export async function getMercadoLivreDraft(productId: string): Promise<MercadoLivreDraft | null> {
   const result = await getDatabasePool().query(
     `SELECT * FROM scx_mercado_livre_product_drafts WHERE product_id = $1 LIMIT 1`,
@@ -537,7 +622,124 @@ export async function getMercadoLivreDraft(productId: string): Promise<MercadoLi
     validationResults: row.validation_results ?? [],
     errorMessage: row.error_message ? String(row.error_message) : null,
     updatedAt: iso(row.updated_at),
+    mediaLibrary: await listMercadoLivreMediaLibrary(productId),
   } satisfies MercadoLivreDraft;
+}
+
+type DraftOfferEdit = {
+  offerId: string;
+  selected: boolean;
+  price: number;
+  pictureSources: string[];
+};
+
+export async function editMercadoLivreDraft(input: {
+  productId: string;
+  unitsPerPack: number;
+  familyName: string;
+  description: string;
+  listingTypeId: "gold_special" | "gold_pro";
+  offers: DraftOfferEdit[];
+}) {
+  const draft = await getMercadoLivreDraft(input.productId);
+  if (!draft) throw new Error("Gere a previa antes de editar.");
+  const familyName = input.familyName.trim().replace(/\s+/g, " ");
+  const description = input.description.trim();
+  if (familyName.length < 15 || familyName.length > 60) throw new Error("O titulo deve ter entre 15 e 60 caracteres.");
+  if (description.length < 80 || description.length > 5000) throw new Error("A descricao deve ter entre 80 e 5.000 caracteres.");
+  if (!["gold_special", "gold_pro"].includes(input.listingTypeId)) throw new Error("Modalidade de anuncio invalida.");
+  const family = draft.payloads.filter((payload) => payload.unitsPerPack === input.unitsPerPack);
+  if (!family.length) throw new Error("O tamanho de kit escolhido nao existe.");
+  const edits = new Map(input.offers.map((item) => [item.offerId, item]));
+  if (family.some((payload) => !edits.has(payload.offerId))) throw new Error("As opcoes de variacao chegaram incompletas.");
+  if (![...edits.values()].some((item) => item.selected)) throw new Error("Selecione ao menos uma variacao.");
+  const mediaLibrary = await listMercadoLivreMediaLibrary(input.productId);
+  const mediaByUrl = new Map(mediaLibrary.map((item) => [item.url, item]));
+  const allowedPictures = new Set(mediaByUrl.keys());
+  const connection = await getMercadoLivreConnection();
+  if (!connection) throw new Error("Conecte a conta do Mercado Livre.");
+  const pricingRule = await getGlobalPricingRule();
+  const payloads = draft.payloads.map((payload) => {
+    if (payload.unitsPerPack !== input.unitsPerPack) return payload;
+    const edit = edits.get(payload.offerId)!;
+    const pictureSources = [...new Set(edit.pictureSources.map((item) => item.trim()).filter(Boolean))];
+    if (edit.selected && (pictureSources.length < 2 || pictureSources.length > 12)) throw new Error(`${payload.color}: selecione de 2 a 12 fotos.`);
+    if (pictureSources.some((url) => !allowedPictures.has(url))) throw new Error(`${payload.color}: a selecao contem uma foto fora da biblioteca do produto.`);
+    if (edit.selected && mediaByUrl.get(pictureSources[0])?.owner !== "product") throw new Error(`${payload.color}: a primeira foto deve ser do produto pai.`);
+    if (edit.selected && !pictureSources.some((url) => mediaByUrl.get(url)?.variantId === payload.variantId)) {
+      throw new Error(`${payload.color}: inclua ao menos uma foto desta variacao.`);
+    }
+    if (!Number.isFinite(edit.price) || edit.price <= 0) throw new Error(`${payload.color}: informe um preco valido.`);
+    return {
+      ...payload,
+      selectedForPublishing: edit.selected,
+      description,
+      body: {
+        ...payload.body,
+        family_name: familyName,
+        listing_type_id: input.listingTypeId,
+        price: Math.round(edit.price * 100) / 100,
+        pictures: pictureSources.map((source) => ({ source })),
+      },
+    };
+  });
+  const costCache = new Map<string, Promise<{ saleFeeInCents: number; shippingCostInCents: number }>>();
+  for (const payload of payloads.filter((item) => item.unitsPerPack === input.unitsPerPack && item.selectedForPublishing !== false)) {
+    const body = payload.body as { price: number; listing_type_id: string; category_id: string; family_name: string; pictures: Array<{ source: string }>; attributes?: unknown[] };
+    const previousDynamicErrors = new Set((payload.contentReadiness?.checks ?? []).map((check) => `${check.label}: corrija antes de publicar.`));
+    const structuralErrors = (payload.readinessErrors ?? []).filter((reason) => !reason.startsWith("Foto principal") && !previousDynamicErrors.has(reason));
+    payload.pictureDiagnostics = [];
+    for (const [index, picture] of body.pictures.entries()) {
+      payload.pictureDiagnostics.push(await diagnosePicture(picture.source, body.category_id, body.family_name, index === 0 ? "thumbnail" : "other"));
+    }
+    const main = payload.pictureDiagnostics[0];
+    payload.contentReadiness = evaluateListingContent({
+      familyName: body.family_name, pictures: body.pictures, videoId: null,
+      description, attributes: body.attributes,
+      mainPictureAccepted: main?.status === "unavailable" ? null : main?.status === "approved",
+    });
+    payload.readinessErrors = structuralErrors;
+    if (main?.status === "issues") payload.readinessErrors.push(`Foto principal reprovada: ${main.issues.join(" ")}`);
+    for (const check of payload.contentReadiness.checks.filter((item) => item.blocking && !item.passed)) {
+      payload.readinessErrors.push(`${check.label}: corrija antes de publicar.`);
+    }
+    const pack = payload.package;
+    const dimensions = `${Math.ceil(pack.heightCm)}x${Math.ceil(pack.widthCm)}x${Math.ceil(pack.lengthCm)},${Math.ceil(pack.weightGrams)}`;
+    const key = `${body.category_id}:${body.listing_type_id}:${body.price}:${dimensions}`;
+    if (!costCache.has(key)) costCache.set(key, (async () => {
+      const feeQuery = new URLSearchParams({ price: String(body.price), listing_type_id: body.listing_type_id, category_id: body.category_id, currency_id: "BRL", logistic_type: "drop_off" });
+      const shippingQuery = new URLSearchParams({ dimensions, verbose: "true", item_price: String(body.price), listing_type_id: body.listing_type_id, mode: "me2", condition: "new", logistic_type: "drop_off", free_shipping: "true" });
+      const [fee, shipping] = await Promise.all([
+        mercadoLivreRequest<{ sale_fee_amount?: number }>(`/sites/${connection.siteId}/listing_prices?${feeQuery}`),
+        mercadoLivreRequest<{ coverage?: { all_country?: { list_cost?: number } } }>(`/users/${connection.userId}/shipping_options/free?${shippingQuery}`),
+      ]);
+      if (!fee.ok || !shipping.ok) throw new Error(`Nao foi possivel recalcular os custos do kit ${pack.unitsPerPack}.`);
+      return { saleFeeInCents: Math.round(Number(fee.body?.sale_fee_amount ?? 0) * 100), shippingCostInCents: Math.round(Number(shipping.body?.coverage?.all_country?.list_cost ?? 0) * 100) };
+    })());
+    const costs = await costCache.get(key)!;
+    const financials = classifyOfferFinancials({
+      priceInCents: Math.round(body.price * 100), ...costs,
+      productCostInCents: payload.productCostInCents,
+      operationalCostInCents: pricingRule.marketplaceOperationalCostAmountInCents,
+      taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
+      minProfitInCents: pricingRule.marketplaceMinProfitAmountInCents,
+      minReturnPercentage: pricingRule.marketplaceMinReturnPercentage,
+      maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
+    });
+    if (payload.package.confidence !== "confirmed") financials.blockReasons.push("Embalagem estimada: confirme medidas e peso antes de publicar.");
+    for (const reason of payload.readinessErrors) if (!financials.blockReasons.includes(reason)) financials.blockReasons.push(reason);
+    if (financials.blockReasons.length) { financials.publishable = false; financials.financialStatus = "blocked"; }
+    payload.fees = financials;
+    payload.publishable = financials.publishable;
+    payload.financialStatus = financials.financialStatus;
+  }
+  await getDatabasePool().query(
+    `UPDATE scx_mercado_livre_product_drafts SET family_name=$2, description=$3, content_source='manual',
+       payloads=$4::jsonb, validation_results='[]'::jsonb, status='draft', error_message=NULL, updated_at=now()
+     WHERE product_id=$1`,
+    [input.productId, familyName, description, JSON.stringify(payloads)],
+  );
+  return getMercadoLivreDraft(input.productId);
 }
 
 async function assertMercadoLivreDraftFresh(draft: MercadoLivreDraft) {
@@ -564,11 +766,16 @@ async function assertMercadoLivreDraftFresh(draft: MercadoLivreDraft) {
   }
 }
 
-export async function validateMercadoLivreDraft(productId: string) {
+export async function validateMercadoLivreDraft(productId: string, unitsPerPack?: number) {
   const draft = await getMercadoLivreDraft(productId);
   if (!draft) throw new Error("Gere o rascunho antes de validar.");
   const results = [];
-  for (const payload of draft.payloads) {
+  const selectedPayloads = draft.payloads.filter((payload) =>
+    payload.selectedForPublishing !== false && (unitsPerPack === undefined || payload.unitsPerPack === unitsPerPack),
+  );
+  if (!selectedPayloads.length) throw new Error("Selecione ao menos uma variacao para validar.");
+  if (selectedPayloads.some((payload) => !payload.publishable)) throw new Error("Corrija os bloqueios das variacoes selecionadas antes de validar.");
+  for (const payload of selectedPayloads) {
     const response = await validateMercadoLivreItem(payload.body);
     const validation = classifyMercadoLivreValidation(response.ok, response.body);
     results.push({
@@ -600,7 +807,7 @@ export async function publishMercadoLivreDraft(productId: string, unitsPerPack: 
     throw new Error("O rascunho precisa passar pelo validador antes da publicacao.");
   }
   await assertMercadoLivreDraftFresh(draft);
-  const selectedPayloads = draft.payloads.filter((payload) => payload.unitsPerPack === unitsPerPack);
+  const selectedPayloads = draft.payloads.filter((payload) => payload.unitsPerPack === unitsPerPack && payload.selectedForPublishing !== false);
   if (!selectedPayloads.length) throw new Error("A familia de kit selecionada nao existe nesta previa.");
   if (selectedPayloads.some((payload: MercadoLivreDraftPayload) => !payload.fees || !Array.isArray(payload.fees.blockReasons))) {
     throw new Error("A previa financeira esta desatualizada. Gere e valide uma nova previa antes de publicar.");

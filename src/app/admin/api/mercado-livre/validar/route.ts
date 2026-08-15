@@ -13,15 +13,19 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   if (!body?.productId) return NextResponse.json({ ok: false, message: "Escolha um produto." }, { status: 400 });
   try {
-    const draft = await validateMercadoLivreDraft(String(body.productId));
+    const unitsPerPack = Number(body.unitsPerPack);
+    const draft = await validateMercadoLivreDraft(
+      String(body.productId),
+      Number.isInteger(unitsPerPack) ? unitsPerPack : undefined,
+    );
     const ok = draft?.status === "validated";
     const warningCount = draft?.validationResults.reduce((total: number, result: unknown) => {
       const warnings = (result as { warnings?: unknown[] })?.warnings;
       return total + (Array.isArray(warnings) ? warnings.length : 0);
     }, 0) ?? 0;
     const successMessage = warningCount
-      ? `Todas as variacoes passaram. O Mercado Livre retornou ${warningCount} aviso(s) nao bloqueante(s).`
-      : "Todas as variacoes passaram no validador oficial.";
+      ? `As variacoes selecionadas passaram. O Mercado Livre retornou ${warningCount} aviso(s) nao bloqueante(s).`
+      : "As variacoes selecionadas passaram no validador oficial.";
     return NextResponse.json({ ok, message: ok ? successMessage : draft?.errorMessage ?? "Validacao recusada.", draft }, { status: ok ? 200 : 422 });
   } catch (error) {
     return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Falha ao validar." }, { status: 400 });

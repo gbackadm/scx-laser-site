@@ -1,380 +1,216 @@
 "use client";
 
-import { CheckCircle2, CircleGauge, FileSearch, Images, LoaderCircle, PackageCheck, Send, SlidersHorizontal, Video } from "lucide-react";
+import {
+  Check, CheckCircle2, ChevronLeft, ChevronRight, CircleGauge, FileSearch,
+  ImagePlus, Images, LoaderCircle, Save, Send, SlidersHorizontal, Star, Trash2,
+} from "lucide-react";
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 
-import type { MercadoLivreDraft } from "@/domain/mercadoLivre/publishingRepository";
+import type { MercadoLivreDraft, MercadoLivreDraftPayload } from "@/domain/mercadoLivre/publishingRepository";
 
 type Candidate = {
-  id: string;
-  scxSku: string;
-  title: string;
-  category: string;
-  imageUrl: string | null;
-  variantCount: number;
-  publishedVariants: number;
-  draftStatus: string | null;
-  profileStatus: string;
-  mercadoLivreCategoryId: string | null;
+  id: string; scxSku: string; title: string; category: string; imageUrl: string | null;
+  variantCount: number; publishedVariants: number; draftStatus: string | null;
+  profileStatus: string; mercadoLivreCategoryId: string | null;
 };
 
-type ApiResult = {
-  ok?: boolean;
-  message?: string;
-  draft?: MercadoLivreDraft | null;
-};
-
-const statusLabels: Record<string, string> = {
-  draft: "Previa gerada",
-  validated: "Validado pelo Mercado Livre",
-  publishing: "Publicando",
-  published: "Publicado",
-  error: "Requer correcao",
+type ApiResult = { ok?: boolean; message?: string; draft?: MercadoLivreDraft | null; url?: string; mediaLibrary?: MercadoLivreDraft["mediaLibrary"] };
+type PreviewBody = {
+  family_name?: string; price?: number; available_quantity?: number; listing_type_id?: string;
+  pictures?: Array<{ source?: string }>; attributes?: Array<{ id?: string; value_id?: string; value_name?: string }>;
 };
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const statusLabels: Record<string, string> = { draft: "Edicao pendente", validated: "Validado", publishing: "Publicando", published: "Publicado", error: "Requer correcao" };
+const fieldClass = "rounded border border-white/15 bg-black px-3 text-sm text-white outline-none transition focus:border-laser";
 
-type PreviewBody = {
-  family_name?: string;
-  price?: number;
-  available_quantity?: number;
-  listing_type_id?: string;
-  pictures?: Array<{ source?: string }>;
-  attributes?: Array<{ id?: string; value_id?: string; value_name?: string }>;
-};
-
-function previewBody(payload: MercadoLivreDraft["payloads"][number]) {
-  return payload.body as PreviewBody;
+function bodyOf(payload?: Partial<MercadoLivreDraftPayload>) { return (payload?.body ?? {}) as PreviewBody; }
+function kitSizesOf(draft: MercadoLivreDraft | null) { return [...new Set((draft?.payloads ?? []).map((item) => item.unitsPerPack))]; }
+function preferredKit(draft: MercadoLivreDraft | null) {
+  return draft?.payloads.find((item) => item.package.confidence === "confirmed" && item.publishable)?.unitsPerPack
+    ?? draft?.payloads.find((item) => item.publishable)?.unitsPerPack
+    ?? draft?.payloads[0]?.unitsPerPack ?? null;
 }
 
-function preferredKitSize(draft: MercadoLivreDraft | null) {
-  const payload = draft?.payloads.find((item) => item.package.confidence === "confirmed" && item.publishable)
-    ?? draft?.payloads.find((item) => item.publishable)
-    ?? draft?.payloads[0];
-  return payload?.unitsPerPack ?? null;
-}
-
-export function MercadoLivrePublishPanel({
-  candidates,
-  initialDraft,
-  commercialRules,
-}: {
+export function MercadoLivrePublishPanel({ candidates, initialDraft, commercialRules }: {
   candidates: Candidate[];
   initialDraft: MercadoLivreDraft | null;
-  commercialRules: {
-    minProfitInCents: number;
-    minReturnPercentage: number;
-    maxProductCostInCents: number;
-    operationalCostInCents: number;
-    taxReservePercentage: number;
-  };
+  commercialRules: { minProfitInCents: number; minReturnPercentage: number; maxProductCostInCents: number; operationalCostInCents: number; taxReservePercentage: number };
 }) {
-  const defaultCandidate = candidates.find((item) => item.scxSku === "SCX-CAN-0021") ?? candidates[0];
+  const defaultCandidate = candidates.find((item) => item.id === initialDraft?.productId)
+    ?? candidates.find((item) => item.profileStatus === "reviewed") ?? candidates[0];
   const [productId, setProductId] = useState(defaultCandidate?.id ?? "");
   const [draft, setDraft] = useState(initialDraft);
-  const [selectedKitSize, setSelectedKitSize] = useState<number | null>(() => preferredKitSize(initialDraft));
+  const [selectedKit, setSelectedKit] = useState<number | null>(() => preferredKit(initialDraft));
   const [message, setMessage] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [uploading, setUploading] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const selected = candidates.find((candidate) => candidate.id === productId);
-  const kitSizes = [...new Set((draft?.payloads ?? []).map((payload) => payload.unitsPerPack))];
-  const selectedPayloads = (draft?.payloads ?? []).filter((payload) => payload.unitsPerPack === selectedKitSize);
-  const hasIncompleteFinancials = selectedPayloads.some((payload) => !payload.fees || !Array.isArray(payload.fees.blockReasons));
-  const hasBlockedOffers = selectedPayloads.some((payload) => !payload.publishable) || hasIncompleteFinancials;
+  const parentFile = useRef<HTMLInputElement>(null);
 
-  function run(path: string, body: Record<string, unknown>) {
+  const selected = candidates.find((item) => item.id === productId);
+  const kits = kitSizesOf(draft);
+  const family = (draft?.payloads ?? []).filter((item) => item.unitsPerPack === selectedKit);
+  const included = family.filter((item) => item.selectedForPublishing !== false);
+  const title = bodyOf(family[0]).family_name ?? draft?.familyName ?? "";
+  const description = family[0]?.description ?? draft?.description ?? "";
+  const listingType = bodyOf(family[0]).listing_type_id ?? "gold_special";
+  const blocked = !included.length || included.some((item) => !item.publishable || !item.fees);
+
+  function acceptDraft(next: MercadoLivreDraft | null | undefined) {
+    if (!next) return;
+    setDraft(next);
+    setSelectedKit((current) => next.payloads.some((item) => item.unitsPerPack === current) ? current : preferredKit(next));
+    setDirty(false);
+    setConfirmed(false);
+  }
+
+  function request(path: string, body: Record<string, unknown>) {
     setMessage(null);
     startTransition(async () => {
       try {
-        const response = await fetch(path, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const result = (await response.json().catch(() => null)) as ApiResult | null;
-        if (result?.draft) {
-          setDraft(result.draft);
-          setSelectedKitSize((current) => result.draft?.payloads.some((payload) => payload.unitsPerPack === current) ? current : preferredKitSize(result.draft ?? null));
-        }
+        const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        const result = await response.json().catch(() => null) as ApiResult | null;
+        acceptDraft(result?.draft);
         setMessage(result?.message ?? `Operacao concluida com codigo ${response.status}.`);
-      } catch {
-        setMessage("Nao foi possivel concluir a operacao agora.");
-      }
+      } catch { setMessage("Nao foi possivel concluir a operacao agora."); }
     });
   }
 
-  if (!defaultCandidate) {
-    return <p className="border-y border-white/10 py-5 text-sm text-zinc-400">Nenhum produto elegivel encontrado.</p>;
+  function updateFamily(updater: (payload: MercadoLivreDraftPayload) => MercadoLivreDraftPayload) {
+    if (!draft || selectedKit === null) return;
+    setDraft({ ...draft, status: "draft", validationResults: [], payloads: draft.payloads.map((item) => item.unitsPerPack === selectedKit ? updater(item) : item) });
+    setDirty(true);
+    setConfirmed(false);
   }
 
-  return (
-    <section className="border-t border-white/10 pt-7">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-black uppercase text-laser">Publicacao controlada</p>
-          <h2 className="mt-2 text-xl font-black">Produto e familias de kit</h2>
-          <p className="mt-2 text-sm text-zinc-400">Somente categorias revisadas, embalagens confirmadas e ofertas aprovadas pelas regras comerciais podem ser publicadas.</p>
+  async function changeProduct(nextId: string) {
+    setProductId(nextId); setDraft(null); setSelectedKit(null); setDirty(false); setMessage(null); setConfirmed(false);
+    try {
+      const response = await fetch(`/admin/api/mercado-livre/rascunho?productId=${encodeURIComponent(nextId)}`);
+      const result = await response.json() as ApiResult;
+      acceptDraft(result.draft);
+    } catch { setMessage("Nao foi possivel carregar o rascunho salvo."); }
+  }
+
+  async function upload(file: File | undefined, variantId: string | null, offerId?: string) {
+    if (!file || !draft) return;
+    const key = variantId ?? "parent";
+    setUploading(key); setMessage(null);
+    const form = new FormData(); form.append("productId", productId); if (variantId) form.append("variantId", variantId); form.append("file", file);
+    try {
+      const response = await fetch("/admin/api/mercado-livre/imagens", { method: "POST", body: form });
+      const result = await response.json().catch(() => null) as ApiResult | null;
+      if (result?.mediaLibrary) setDraft((current) => current ? { ...current, mediaLibrary: result.mediaLibrary! } : current);
+      if (response.ok && result?.url && offerId) setPictures(offerId, [...picturesOf(family.find((item) => item.offerId === offerId)!), result.url]);
+      setMessage(result?.message ?? "Upload concluido.");
+    } catch { setMessage("Nao foi possivel enviar a imagem."); }
+    finally { setUploading(null); }
+  }
+
+  function picturesOf(payload: MercadoLivreDraftPayload) { return (bodyOf(payload).pictures ?? []).map((item) => item.source).filter(Boolean) as string[]; }
+  function setPictures(offerId: string, sources: string[]) {
+    updateFamily((item) => item.offerId === offerId ? { ...item, body: { ...item.body, pictures: [...new Set(sources)].slice(0, 12).map((source) => ({ source })) } } : item);
+  }
+  function movePicture(payload: MercadoLivreDraftPayload, index: number, direction: -1 | 1) {
+    const sources = picturesOf(payload); const target = index + direction;
+    if (target < 0 || target >= sources.length) return;
+    [sources[index], sources[target]] = [sources[target], sources[index]]; setPictures(payload.offerId, sources);
+  }
+  function setMainPicture(payload: MercadoLivreDraftPayload, url: string) {
+    setPictures(payload.offerId, [url, ...picturesOf(payload).filter((item) => item !== url)]);
+  }
+  function saveDraft() {
+    if (!draft || selectedKit === null) return;
+    request("/admin/api/mercado-livre/rascunho/editar", {
+      productId, unitsPerPack: selectedKit, familyName: title, description, listingTypeId: listingType,
+      offers: family.map((item) => ({ offerId: item.offerId, selected: item.selectedForPublishing !== false, price: bodyOf(item).price, pictureSources: picturesOf(item) })),
+    });
+  }
+
+  if (!defaultCandidate) return <p className="border-y border-white/10 py-5 text-sm text-zinc-400">Nenhum produto encontrado.</p>;
+
+  return <section className="border-t border-white/10 pt-7">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div><p className="text-xs font-black uppercase text-laser">Editor de publicacao</p><h2 className="mt-2 text-xl font-black">Prepare exatamente o que sera enviado</h2></div>
+      {draft ? <span className="text-sm font-bold text-zinc-300">{dirty ? "Alteracoes nao salvas" : statusLabels[draft.status] ?? draft.status}</span> : null}
+    </div>
+
+    <div className="mt-5 grid gap-4 border-y border-white/10 py-4 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto] lg:items-center">
+      <div><p className="text-xs text-zinc-500">Resultado minimo</p><p className="mt-1 font-black">{money.format(commercialRules.minProfitInCents / 100)}</p></div>
+      <div><p className="text-xs text-zinc-500">Retorno minimo</p><p className="mt-1 font-black">{commercialRules.minReturnPercentage}%</p></div>
+      <div><p className="text-xs text-zinc-500">Custo maximo</p><p className="mt-1 font-black">{money.format(commercialRules.maxProductCostInCents / 100)}</p></div>
+      <div><p className="text-xs text-zinc-500">Custo operacional</p><p className="mt-1 font-black">{money.format(commercialRules.operationalCostInCents / 100)}</p></div>
+      <div><p className="text-xs text-zinc-500">Reserva</p><p className="mt-1 font-black">{commercialRules.taxReservePercentage}%</p></div>
+      <Link href="/admin/precos" className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-white/15 px-3 text-sm font-black"><SlidersHorizontal size={16}/> Alterar</Link>
+    </div>
+
+    <div className="grid gap-4 border-b border-white/10 py-5 lg:grid-cols-[5rem_minmax(0,1fr)_auto] lg:items-end">
+      <div className="h-20 w-20 overflow-hidden rounded border border-white/10 bg-white">{selected?.imageUrl ? <img src={selected.imageUrl} alt="" className="h-full w-full object-contain"/> : <Images className="m-7 text-zinc-500"/>}</div>
+      <label className="grid min-w-0 gap-2 text-sm font-bold text-zinc-300">Produto
+        <select value={productId} disabled={isPending} onChange={(event) => void changeProduct(event.target.value)} className={`${fieldClass} h-11 w-full min-w-0`}>
+          {[...new Set(candidates.map((item) => item.category))].map((category) => <optgroup key={category} label={category}>{candidates.filter((item) => item.category === category).map((item) => <option key={item.id} value={item.id}>{item.scxSku} - {item.title} ({item.variantCount} variacoes){item.profileStatus !== "reviewed" ? " - configurar categoria" : ""}</option>)}</optgroup>)}
+        </select>
+        <span className={`text-xs ${selected?.profileStatus === "reviewed" ? "text-emerald-300" : "text-amber-200"}`}>{selected?.profileStatus === "reviewed" ? `${selected.category} pronta` : "Esta categoria ainda precisa de mapeamento seguro"}</span>
+      </label>
+      <button type="button" disabled={isPending || selected?.profileStatus !== "reviewed"} onClick={() => request("/admin/api/mercado-livre/rascunho", { productId })} className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-white/15 px-4 text-sm font-black disabled:text-zinc-600">{isPending ? <LoaderCircle size={17} className="animate-spin"/> : <FileSearch size={17}/>} Gerar nova previa</button>
+    </div>
+
+    {draft ? <>
+      <div className="mt-6 flex flex-wrap gap-2" aria-label="Tamanho do kit">{kits.map((size) => <button key={size} type="button" onClick={() => { setSelectedKit(size); setDirty(false); setConfirmed(false); }} className={`min-h-10 rounded border px-3 text-sm font-black ${selectedKit === size ? "border-laser bg-red-950/30" : "border-white/15 text-zinc-400"}`}>Kit {size}</button>)}</div>
+
+      <section className="mt-6 border-y border-white/10 py-6">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <label className="grid gap-2 text-sm font-bold">Titulo do anuncio <input value={title} maxLength={60} onChange={(event) => updateFamily((item) => ({ ...item, body: { ...item.body, family_name: event.target.value } }))} className={`${fieldClass} h-11`}/><span className={`text-xs ${title.length >= 45 ? "text-emerald-300" : "text-amber-200"}`}>{title.length}/60 caracteres</span></label>
+          <fieldset><legend className="text-sm font-bold">Modalidade</legend><div className="mt-2 inline-flex rounded border border-white/15 p-1">{[["gold_special","Classico"],["gold_pro","Premium"]].map(([value,label]) => <button key={value} type="button" onClick={() => updateFamily((item) => ({ ...item, body: { ...item.body, listing_type_id: value } }))} className={`min-h-9 rounded px-4 text-sm font-black ${listingType === value ? "bg-white text-black" : "text-zinc-400"}`}>{label}</button>)}</div></fieldset>
+          <label className="grid gap-2 text-sm font-bold lg:col-span-2">Descricao <textarea value={description} rows={8} maxLength={5000} onChange={(event) => updateFamily((item) => ({ ...item, description: event.target.value }))} className={`${fieldClass} resize-y py-3 leading-6`}/><span className="text-xs text-zinc-500">{description.length}/5.000 caracteres</span></label>
         </div>
-        {draft ? (
-          <span className={`text-sm font-bold ${draft.status === "validated" || draft.status === "published" ? "text-emerald-300" : draft.status === "error" ? "text-amber-200" : "text-zinc-300"}`}>
-            {statusLabels[draft.status] ?? draft.status}
-          </span>
-        ) : null}
-      </div>
+      </section>
 
-      <div className="mt-5 grid gap-4 border-y border-white/10 py-4 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto] lg:items-center">
-        <div><p className="text-xs text-zinc-500">Resultado minimo</p><p className="mt-1 font-black">{money.format(commercialRules.minProfitInCents / 100)}</p></div>
-        <div><p className="text-xs text-zinc-500">Retorno minimo</p><p className="mt-1 font-black">{commercialRules.minReturnPercentage.toLocaleString("pt-BR")}%</p></div>
-        <div><p className="text-xs text-zinc-500">Custo maximo</p><p className="mt-1 font-black">{money.format(commercialRules.maxProductCostInCents / 100)}</p></div>
-        <div><p className="text-xs text-zinc-500">Custo operacional</p><p className="mt-1 font-black">{money.format(commercialRules.operationalCostInCents / 100)}</p></div>
-        <div><p className="text-xs text-zinc-500">Reserva</p><p className="mt-1 font-black">{commercialRules.taxReservePercentage.toLocaleString("pt-BR")}%</p></div>
-        <Link href="/admin/precos" className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-white/15 px-3 text-sm font-black text-zinc-200 hover:border-white/30">
-          <SlidersHorizontal size={16} /> Alterar
-        </Link>
-      </div>
+      <section className="border-b border-white/10 py-5">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">Biblioteca de imagens</h3><p className="mt-1 text-sm text-zinc-400">Clique nas fotos dentro de cada variacao para inclui-las. A ordem exibida sera a ordem do anuncio.</p></div><input ref={parentFile} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => void upload(event.target.files?.[0], null)}/><button type="button" disabled={Boolean(uploading)} onClick={() => parentFile.current?.click()} className="inline-flex min-h-10 items-center gap-2 rounded border border-white/15 px-3 text-sm font-black">{uploading === "parent" ? <LoaderCircle size={16} className="animate-spin"/> : <ImagePlus size={16}/>} Adicionar ao produto pai</button></div>
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-2">{draft.mediaLibrary.filter((item) => item.owner === "product").map((asset) => <div key={asset.id} className="h-20 w-20 shrink-0 overflow-hidden rounded border border-white/15 bg-white"><img src={asset.url} alt={asset.label} className="h-full w-full object-contain"/></div>)}{!draft.mediaLibrary.some((item) => item.owner === "product") ? <p className="text-sm font-bold text-amber-200">Adicione uma foto do produto pai para usar como principal.</p> : null}</div>
+      </section>
 
-      <div className="grid gap-4 border-b border-white/10 py-5 lg:grid-cols-[5rem_minmax(0,1fr)_auto] lg:items-end">
-        <div className="h-20 w-20 overflow-hidden rounded border border-white/10 bg-white">
-          {selected?.imageUrl ? <img src={selected.imageUrl} alt={selected.title} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center text-zinc-400"><Images size={22} /></div>}
-        </div>
-        <label className="grid min-w-0 gap-2 text-sm font-bold text-zinc-300">
-          Produto
-          <select
-            value={productId}
-            disabled={isPending}
-            onChange={(event) => {
-              setProductId(event.target.value);
-              setDraft(null);
-              setSelectedKitSize(null);
-              setConfirmed(false);
-              setMessage(null);
-            }}
-            className="h-11 rounded border border-white/15 bg-black px-3 text-white outline-none focus:border-laser"
-          >
-            {[...new Set(candidates.map((candidate) => candidate.category))].map((category) => (
-              <optgroup key={category} label={category}>
-                {candidates.filter((candidate) => candidate.category === category).map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>
-                    {candidate.scxSku} - {candidate.title} ({candidate.variantCount} variacoes){candidate.profileStatus !== "reviewed" ? " - categoria nao configurada" : ""}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-          <span className={`text-xs ${selected?.profileStatus === "reviewed" ? "text-emerald-300" : "text-amber-200"}`}>
-            {selected?.profileStatus === "reviewed" ? `${selected.category} pronta para simulacao` : `${selected?.category ?? "Categoria"} ainda nao configurada para o Mercado Livre`}
-          </span>
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={isPending || selected?.profileStatus !== "reviewed"}
-            onClick={() => run("/admin/api/mercado-livre/rascunho", { productId })}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-white/15 px-4 text-sm font-black text-zinc-200 hover:border-white/30 disabled:text-zinc-600"
-          >
-            {isPending ? <LoaderCircle size={17} className="animate-spin" /> : <FileSearch size={17} />}
-            Gerar previa
-          </button>
-          <button
-            type="button"
-            disabled={isPending || !draft || hasIncompleteFinancials}
-            onClick={() => run("/admin/api/mercado-livre/validar", { productId })}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-emerald-300/30 px-4 text-sm font-black text-emerald-200 hover:border-emerald-200 disabled:border-white/10 disabled:text-zinc-600"
-          >
-            <CheckCircle2 size={17} /> Validar no Mercado Livre
-          </button>
-        </div>
-      </div>
-
-      {draft ? (
-        <div className="grid gap-5 py-5 lg:grid-cols-[0.8fr_1.2fr]">
-          <dl className="divide-y divide-white/10 text-sm">
-            <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Familia</dt><dd className="text-right font-bold">{draft.familyName}</dd></div>
-            <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Categoria ML</dt><dd className="font-bold">{draft.categoryId}</dd></div>
-            <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Ofertas</dt><dd className="font-bold">{draft.payloads.length}</dd></div>
-            <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Tamanhos de kit</dt><dd className="font-bold">{kitSizes.join(", ")}</dd></div>
-            <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Ja publicadas</dt><dd className="font-bold">{selected?.publishedVariants ?? 0}</dd></div>
-          </dl>
-          <div>
-            <p className="text-sm font-bold text-zinc-400">Descricao</p>
-            <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded border border-white/10 bg-black/35 p-4 font-sans text-sm leading-6 text-zinc-200">{draft.description}</pre>
-          </div>
-        </div>
-      ) : null}
-
-      {draft?.errorMessage ? (
-        <p className="border-y border-amber-300/20 bg-amber-950/15 px-3 py-3 text-sm font-bold text-amber-100">
-          {draft.errorMessage}
-        </p>
-      ) : null}
-
-      {draft ? (
-        <section className="border-t border-white/10 py-6">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="text-xs font-black uppercase text-laser">Conferencia completa</p>
-              <h3 className="mt-2 text-xl font-black">Ofertas que serao enviadas</h3>
+      <div className="divide-y divide-white/10">
+        {family.map((payload) => {
+          const body = bodyOf(payload); const pictures = picturesOf(payload);
+          const assets = [...draft.mediaLibrary].sort((a,b) => Number(b.variantId === payload.variantId) - Number(a.variantId === payload.variantId));
+          const validation = draft.validationResults.find((item) => (item as {sku?:string}).sku === payload.sku) as {ok?:boolean}|undefined;
+          return <article key={payload.offerId} className={`py-6 ${payload.selectedForPublishing === false ? "opacity-60" : ""}`}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <label className="inline-flex min-h-10 items-center gap-3 font-black"><input type="checkbox" checked={payload.selectedForPublishing !== false} onChange={(event) => updateFamily((item) => item.offerId === payload.offerId ? { ...item, selectedForPublishing: event.target.checked } : item)} className="h-5 w-5 accent-red-600"/><span>{payload.color}</span><span className="text-xs font-normal text-zinc-500">{payload.sku}</span></label>
+              <span className={`text-xs font-black ${validation?.ok ? "text-emerald-300" : payload.publishable ? "text-zinc-400" : "text-red-200"}`}>{validation?.ok ? "Validada" : payload.publishable ? "Pronta para validar" : "Bloqueada"}</span>
             </div>
-            <p className="max-w-xl text-sm leading-6 text-zinc-400">
-              Cada tamanho de kit forma uma familia. As variacoes aprovadas pela categoria aparecem como opcoes para o comprador.
-            </p>
-          </div>
+            <div className="mt-4 grid gap-5 xl:grid-cols-[minmax(280px,.75fr)_1.25fr]">
+              <div className="min-w-0">
+                <label className="grid gap-2 text-sm font-bold">Preco do kit <input type="number" min="0.01" step="0.01" value={body.price ?? ""} onChange={(event) => updateFamily((item) => item.offerId === payload.offerId ? { ...item, body: { ...item.body, price: Number(event.target.value) } } : item)} className={`${fieldClass} h-11`}/></label>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-zinc-500">Estoque</dt><dd className="font-black">{body.available_quantity ?? 0} kits</dd></div><div><dt className="text-zinc-500">Custo</dt><dd className="font-black">{money.format(payload.productCostInCents/100)}</dd></div>{payload.fees ? <><div><dt className="text-zinc-500">Comissao</dt><dd className="font-black">-{money.format(payload.fees.saleFeeInCents/100)}</dd></div><div><dt className="text-zinc-500">Frete</dt><dd className="font-black">-{money.format(payload.fees.shippingCostInCents/100)}</dd></div><div><dt className="text-zinc-500">Resultado</dt><dd className={payload.publishable ? "font-black text-emerald-300" : "font-black text-red-200"}>{money.format(payload.fees.estimatedProfitInCents/100)}</dd></div><div><dt className="text-zinc-500">Retorno</dt><dd className="font-black">{payload.fees.returnPercentage.toFixed(1)}%</dd></div></> : null}</dl>
+                {payload.contentReadiness ? <p className="mt-4 inline-flex items-center gap-2 text-sm font-black"><CircleGauge size={16}/> Qualidade {payload.contentReadiness.score}/100</p> : null}
+                {payload.fees?.blockReasons.length ? <div className="mt-3 space-y-1 text-xs text-red-200">{payload.fees.blockReasons.map((reason) => <p key={reason}>{reason}</p>)}</div> : null}
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center justify-between gap-3"><p className="text-sm font-black">Fotos selecionadas ({pictures.length}/12)</p><label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded border border-white/15 px-3 text-xs font-black"><input type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => void upload(event.target.files?.[0], payload.variantId, payload.offerId)}/>{uploading === payload.variantId ? <LoaderCircle size={15} className="animate-spin"/> : <ImagePlus size={15}/>} Nova desta variacao</label></div>
+                <div className="mt-3 flex gap-2 overflow-x-auto pb-2">{pictures.map((url,index) => { const asset=draft.mediaLibrary.find((item)=>item.url===url); return <div key={url} className="relative h-28 w-28 shrink-0 overflow-hidden rounded border border-white/20 bg-white"><img src={url} alt="" className="h-full w-full object-contain"/><span className="absolute left-1 top-1 rounded bg-black/80 px-1.5 py-0.5 text-xs font-black">{index+1}</span>{index===0 ? <Star size={15} className="absolute right-1 top-1 fill-yellow-300 text-yellow-300"/> : null}<div className="absolute inset-x-0 bottom-0 flex justify-center gap-1 bg-black/80 p-1"><button type="button" title="Mover para esquerda" onClick={()=>movePicture(payload,index,-1)}><ChevronLeft size={16}/></button><button type="button" title="Definir como principal" onClick={()=>setMainPicture(payload,url)}><Star size={15}/></button><button type="button" title="Remover do anuncio" onClick={()=>setPictures(payload.offerId,pictures.filter((item)=>item!==url))}><Trash2 size={15}/></button><button type="button" title="Mover para direita" onClick={()=>movePicture(payload,index,1)}><ChevronRight size={16}/></button></div>{asset ? <span className="absolute left-1 top-7 rounded bg-black/75 px-1 text-[10px]">{asset.owner === "product" ? "Pai" : asset.label}</span> : null}</div>})}</div>
+                <p className="mt-3 text-xs font-bold text-zinc-400">Fotos disponiveis. Clique para incluir:</p>
+                <div className="mt-2 flex max-h-52 flex-wrap gap-2 overflow-y-auto">{assets.map((asset) => { const active=pictures.includes(asset.url); return <button key={asset.id} type="button" title={`${active ? "Remover" : "Incluir"}: ${asset.label}`} onClick={()=>setPictures(payload.offerId,active ? pictures.filter((item)=>item!==asset.url) : [...pictures,asset.url])} className={`relative h-16 w-16 overflow-hidden rounded border-2 bg-white ${active ? "border-emerald-400" : asset.variantId===payload.variantId ? "border-sky-400" : "border-transparent"}`}><img src={asset.url} alt={asset.label} className="h-full w-full object-contain"/>{active ? <Check size={16} className="absolute right-0 top-0 rounded-bl bg-emerald-500 p-0.5 text-black"/> : null}</button>})}</div>
+                <p className={`mt-3 text-xs font-bold ${draft.mediaLibrary.find((a)=>a.url===pictures[0])?.owner === "product" && pictures.some((url)=>draft.mediaLibrary.find((a)=>a.url===url)?.variantId===payload.variantId) && pictures.length>=2 ? "text-emerald-300" : "text-amber-200"}`}>A foto 1 deve ser do produto pai e a selecao deve conter uma foto desta variacao.</p>
+              </div>
+            </div>
+          </article>;
+        })}
+      </div>
 
-          <div className="mt-5 flex flex-wrap gap-2" aria-label="Familia de kit">
-            {kitSizes.map((size) => {
-              const family = draft.payloads.filter((payload) => payload.unitsPerPack === size);
-              const blocked = family.some((payload) => !payload.publishable);
-              const estimated = family.some((payload) => payload.package.confidence === "estimated");
-              return <button key={size} type="button" onClick={() => { setSelectedKitSize(size); setConfirmed(false); }} className={`min-h-10 rounded border px-3 text-sm font-black ${selectedKitSize === size ? "border-laser bg-red-950/30 text-white" : "border-white/15 text-zinc-300"}`}>
-                Kit {size} {blocked ? "- bloqueado" : estimated ? "- estimado" : "- confirmado"}
-              </button>;
-            })}
-          </div>
-
-          <div className="mt-5 grid gap-4 xl:grid-cols-2">
-            {selectedPayloads.map((payload) => {
-              const body = previewBody(payload);
-              const pictures = body.pictures ?? [];
-              const validation = draft.validationResults.find((item) => (item as { sku?: string })?.sku === payload.sku) as { ok?: boolean; warnings?: Array<{ code?: string; message?: string }>; errors?: unknown[] } | undefined;
-              const totalUnits = (body.available_quantity ?? 0) * payload.unitsPerPack;
-              return (
-                <article key={payload.offerId} className="overflow-hidden rounded-md border border-white/10 bg-[#0d0f10]">
-                  <div className="grid sm:grid-cols-[180px_1fr]">
-                    <div className="border-b border-white/10 bg-white p-3 sm:border-b-0 sm:border-r">
-                      {pictures[0]?.source ? (
-                        <img src={pictures[0].source} alt={`${payload.color} - ${payload.sku}`} className="aspect-square h-full w-full object-contain" />
-                      ) : (
-                        <div className="flex aspect-square items-center justify-center text-zinc-500"><Images size={28} /></div>
-                      )}
-                    </div>
-                    <div className="p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-black uppercase text-laser">{payload.color}</p>
-                          <h4 className="mt-1 font-black">{body.family_name}</h4>
-                          <p className="mt-1 text-xs text-zinc-500">{body.family_name?.length ?? 0}/44 caracteres reservados para a familia</p>
-                          <p className="mt-1 text-xs text-zinc-500">{payload.sku}</p>
-                        </div>
-                        <span className={`rounded px-2 py-1 text-xs font-black ${!payload.publishable ? "bg-red-400/10 text-red-200" : payload.financialStatus === "warning" ? "bg-amber-400/10 text-amber-200" : validation?.ok ? "bg-emerald-400/10 text-emerald-200" : "bg-zinc-800 text-zinc-400"}`}>
-                          {!payload.publishable ? "Bloqueado por regras" : payload.financialStatus === "warning" ? "Margem baixa" : validation?.ok ? "Validado" : "A validar"}
-                        </span>
-                      </div>
-                      <p className="mt-4 text-2xl font-black text-white">{money.format(body.price ?? 0)}</p>
-                      <p className="mt-1 text-sm text-zinc-400">{money.format(payload.unitPriceInCents / 100)} por unidade</p>
-                      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                        <div><dt className="text-zinc-500">Conteudo</dt><dd className="font-bold">{payload.unitsPerPack} unidade(s)</dd></div>
-                        <div><dt className="text-zinc-500">Estoque ML</dt><dd className="font-bold">{body.available_quantity ?? 0} kits</dd></div>
-                        <div><dt className="text-zinc-500">Unidades cobertas</dt><dd className="font-bold">{totalUnits}</dd></div>
-                        <div><dt className="text-zinc-500">Plano</dt><dd className="font-bold">Classico</dd></div>
-                      </dl>
-                      {payload.contentReadiness ? (
-                        <div className="mt-4 border-t border-white/10 pt-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="inline-flex items-center gap-2 text-sm font-black text-zinc-200"><CircleGauge size={16} /> Prontidao do conteudo</span>
-                            <strong className="text-lg text-white">{payload.contentReadiness.score}/100</strong>
-                          </div>
-                          <p className="mt-1 text-[11px] text-zinc-500">{payload.contentReadiness.label}</p>
-                          <div className="mt-3 grid gap-2 text-xs">
-                            {payload.contentReadiness.checks.map((check) => (
-                              <p key={check.id} className={check.passed ? "text-emerald-200" : check.blocking ? "text-red-200" : "text-amber-200"}>
-                                {check.passed ? "OK" : check.blocking ? "Bloqueia" : "Melhoria"}: {check.label}
-                              </p>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                      <p className={`mt-4 inline-flex items-center gap-2 text-xs font-bold ${payload.sourceVideoId ? "text-sky-200" : "text-amber-200"}`}>
-                        <Video size={15} /> {payload.sourceVideoId ? "Video-fonte disponivel; YouTube nao pode ser enviado e requer Clip" : "Fornecedor sem video valido para converter em Clip"}
-                      </p>
-                      {payload.fees ? (
-                        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-white/10 pt-4 text-sm">
-                          <div><dt className="text-zinc-500">Comissao ML</dt><dd className="font-bold text-amber-100">-{money.format(payload.fees.saleFeeInCents / 100)}</dd></div>
-                          <div><dt className="text-zinc-500">Frete estimado</dt><dd className="font-bold text-amber-100">-{money.format(payload.fees.shippingCostInCents / 100)}</dd></div>
-                          <div><dt className="text-zinc-500">Custo do produto</dt><dd className="font-bold">-{money.format(payload.productCostInCents / 100)}</dd></div>
-                          <div><dt className="text-zinc-500">Custo operacional</dt><dd className="font-bold">-{money.format((payload.fees.operationalCostInCents ?? 0) / 100)}</dd></div>
-                          <div><dt className="text-zinc-500">Reserva configurada</dt><dd className="font-bold">-{money.format((payload.fees.taxReserveInCents ?? 0) / 100)}</dd></div>
-                          <div><dt className="text-zinc-500">Resultado estimado</dt><dd className={`font-black ${payload.publishable ? "text-emerald-200" : "text-red-200"}`}>{money.format((payload.fees.estimatedProfitInCents ?? payload.fees.contributionInCents) / 100)}</dd></div>
-                          <div><dt className="text-zinc-500">Retorno sobre o custo</dt><dd className={`font-black ${payload.publishable ? "text-emerald-200" : "text-red-200"}`}>{payload.fees.returnPercentage == null ? "Recalcular" : `${payload.fees.returnPercentage.toLocaleString("pt-BR")}%`}</dd></div>
-                          <div className="col-span-2"><dt className="text-zinc-500">Margem estimada sobre a venda</dt><dd className={`font-black ${payload.publishable ? "text-emerald-200" : "text-red-200"}`}>{payload.fees.contributionPercentage.toLocaleString("pt-BR")}%</dd></div>
-                        </dl>
-                      ) : null}
-                      {(payload.fees?.blockReasons ?? []).map((reason) => <p key={reason} className="mt-2 text-xs leading-5 text-red-200">{reason}</p>)}
-                      {payload.financialStatus === "warning" ? <p className="mt-3 text-xs leading-5 text-amber-200">Margem inferior a 15% antes de impostos e outros custos. Revise antes de publicar.</p> : null}
-                    </div>
-                  </div>
-
-                  <div className="border-t border-white/10 px-4 py-4">
-                    <div className="flex items-center gap-2 text-sm font-black"><PackageCheck size={16} className={payload.package.confidence === "confirmed" ? "text-emerald-300" : "text-amber-300"} /> Embalagem {payload.package.confidence === "confirmed" ? "confirmada" : "estimada"}</div>
-                    <p className="mt-2 text-sm text-zinc-400">
-                      {payload.package.lengthCm} x {payload.package.widthCm} x {payload.package.heightCm} cm | {payload.package.weightGrams} g
-                    </p>
-                    {payload.package.warning ? <p className="mt-2 text-xs leading-5 text-amber-200">{payload.package.warning}</p> : null}
-                    <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-                      {pictures.map((picture, index) => picture.source ? (
-                        <div key={`${picture.source}-${index}`} className="w-16 shrink-0">
-                          <img src={picture.source} alt={index === 0 ? `Imagem principal de ${payload.color}` : "Imagem de apoio do produto"} className="aspect-square w-full rounded border border-white/10 bg-white object-contain" />
-                          <span className="mt-1 block text-center text-[10px] text-zinc-500">{index === 0 ? "Principal" : `Foto ${index + 1}`}</span>
-                        </div>
-                      ) : null)}
-                    </div>
-                    {payload.pictureDiagnostics?.some((item) => item.status !== "approved") ? (
-                      <div className="mt-3 text-xs leading-5">
-                        {payload.pictureDiagnostics.map((item, index) => item.status !== "approved" ? (
-                          <p key={`${item.source}-${item.pictureType}`} className={item.status === "issues" ? "text-red-200" : "text-amber-200"}>
-                            Foto {index + 1}: {item.status === "unavailable" ? "diagnostico oficial indisponivel; o fluxo nao foi bloqueado." : item.issues.join(" ")}
-                          </p>
-                        ) : null)}
-                      </div>
-                    ) : null}
-                    {validation?.warnings?.length ? (
-                      <div className="mt-4 text-xs leading-5 text-amber-200">
-                        {validation.warnings.map((warning) => <p key={warning.code}>{warning.code}: {warning.message}</p>)}
-                      </div>
-                    ) : null}
-                    <details className="mt-4 border-t border-white/10 pt-3">
-                      <summary className="cursor-pointer text-sm font-black text-zinc-300">Atributos enviados ({body.attributes?.length ?? 0})</summary>
-                      <dl className="mt-3 grid gap-2 text-xs">
-                        {(body.attributes ?? []).map((attribute) => (
-                          <div key={attribute.id} className="grid grid-cols-[minmax(130px,0.8fr)_1.2fr] gap-3 border-b border-white/5 pb-2">
-                            <dt className="break-words text-zinc-500">{attribute.id}</dt>
-                            <dd className="break-words font-bold text-zinc-200">{attribute.value_name ?? attribute.value_id ?? "-"}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </details>
-                    <details className="mt-3 border-t border-white/10 pt-3">
-                      <summary className="cursor-pointer text-sm font-black text-zinc-300">Payload completo da API</summary>
-                      <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words bg-black/35 p-3 text-xs leading-5 text-zinc-300">{JSON.stringify(body, null, 2)}</pre>
-                    </details>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      {message ? <p className="border-y border-white/10 py-3 text-sm font-bold text-zinc-200">{message}</p> : null}
-
-      {hasIncompleteFinancials ? <p className="border-y border-amber-300/20 bg-amber-950/15 px-3 py-3 text-sm font-bold text-amber-100">Esta previa foi criada antes das regras comerciais atuais. Gere uma nova previa para liberar a validacao e a publicacao.</p> : null}
-
-      {draft?.status === "validated" ? (
-        <div className="mt-5 grid gap-4 border border-red-500/25 bg-red-950/15 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
-          <label className="flex items-start gap-3 text-sm leading-6 text-zinc-200">
-            <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 h-4 w-4 accent-red-600" />
-            Confirmo a criacao real de {selectedPayloads.length} itens da familia de kit com {selectedKitSize} unidade(s), no plano Classico.
-          </label>
-          <button
-            type="button"
-            disabled={isPending || !confirmed || hasBlockedOffers}
-            onClick={() => run("/admin/api/mercado-livre/publicar", { productId, unitsPerPack: selectedKitSize, confirmed: true })}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-laser px-4 text-sm font-black text-white hover:bg-red-600 disabled:bg-zinc-800 disabled:text-zinc-500"
-          >
-            <Send size={17} /> Publicar agora
-          </button>
-        </div>
-      ) : null}
-    </section>
-  );
+      <div className="sticky bottom-0 z-20 -mx-4 border-t border-white/15 bg-[#050606]/95 px-4 py-4 backdrop-blur sm:mx-0 sm:px-0">
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-bold text-zinc-300">{included.length} variacao(oes) selecionada(s) no kit {selectedKit}</p><div className="flex flex-wrap gap-2">
+          <button type="button" disabled={!dirty || isPending} onClick={saveDraft} className="inline-flex min-h-11 items-center gap-2 rounded bg-white px-4 text-sm font-black text-black disabled:bg-zinc-800 disabled:text-zinc-500">{isPending ? <LoaderCircle size={17} className="animate-spin"/> : <Save size={17}/>} Salvar e recalcular</button>
+          <button type="button" disabled={dirty || isPending || blocked} onClick={()=>request("/admin/api/mercado-livre/validar",{productId,unitsPerPack:selectedKit})} className="inline-flex min-h-11 items-center gap-2 rounded border border-emerald-300/30 px-4 text-sm font-black text-emerald-200 disabled:border-white/10 disabled:text-zinc-600"><CheckCircle2 size={17}/> Validar</button>
+        </div></div>
+        {draft.status === "validated" && !dirty ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4"><label className="inline-flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={confirmed} onChange={(event)=>setConfirmed(event.target.checked)} className="h-5 w-5 accent-red-600"/> Conferi fotos, variacoes, preco, estoque e custos</label><button type="button" disabled={!confirmed || blocked || isPending} onClick={()=>request("/admin/api/mercado-livre/publicar",{productId,unitsPerPack:selectedKit,confirmed:true})} className="inline-flex min-h-11 items-center gap-2 rounded bg-laser px-5 text-sm font-black disabled:bg-zinc-800 disabled:text-zinc-500"><Send size={17}/> Publicar agora</button></div> : null}
+      </div>
+    </> : null}
+    {message ? <p className="mt-4 border-y border-white/10 py-3 text-sm font-bold text-zinc-200">{message}</p> : null}
+  </section>;
 }

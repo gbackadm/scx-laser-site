@@ -2,9 +2,19 @@ import { NextResponse } from "next/server";
 
 import { getCurrentAdminSession } from "@/domain/auth/session";
 import { roleCan } from "@/domain/catalog/permissions";
-import { generateMercadoLivreDraft } from "@/domain/mercadoLivre/publishingRepository";
+import { generateMercadoLivreDraft, getMercadoLivreDraft } from "@/domain/mercadoLivre/publishingRepository";
 
 export const runtime = "nodejs";
+
+export async function GET(request: Request) {
+  const session = await getCurrentAdminSession();
+  if (!session) return NextResponse.json({ ok: false, message: "Sessao expirada." }, { status: 401 });
+  if (!roleCan(session.role, "catalog:publish")) return NextResponse.json({ ok: false, message: "Sem permissao para publicar." }, { status: 403 });
+  const productId = new URL(request.url).searchParams.get("productId");
+  if (!productId) return NextResponse.json({ ok: false, message: "Escolha um produto." }, { status: 400 });
+  const draft = await getMercadoLivreDraft(productId);
+  return NextResponse.json({ ok: true, draft });
+}
 
 export async function POST(request: Request) {
   const session = await getCurrentAdminSession();

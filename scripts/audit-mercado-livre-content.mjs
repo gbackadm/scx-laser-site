@@ -29,27 +29,31 @@ try {
      ORDER BY p.scx_sku, v.sort_order, v.id`);
 
   const rows = result.rows.map((row) => {
+    const productImages = (row.product_images ?? []).map(String);
+    const variantImages = (row.variant_images ?? []).map(String);
     const pictures = orderListingPictureUrls({
-      variantImages: (row.variant_images ?? []).map(String),
-      productImages: (row.product_images ?? []).map(String),
+      variantImages,
+      productImages,
       variantAttributes: row.attributes ?? {},
     });
     return {
       productSku: String(row.scx_sku),
       variantSku: row.variant_sku ? String(row.variant_sku) : null,
       pictureCount: pictures.length,
+      hasParentPicture: productImages.length > 0,
+      hasOwnVariantPicture: variantImages.length > 0,
       videoId: extractYoutubeVideoId(row.raw_payload?.video),
     };
   });
   const uniqueProducts = new Set(rows.map((row) => row.productSku));
   const productsWithVideo = new Set(rows.filter((row) => row.videoId).map((row) => row.productSku));
-  const insufficient = rows.filter((row) => row.pictureCount < 2);
+  const insufficient = rows.filter((row) => row.pictureCount < 2 || !row.hasParentPicture || !row.hasOwnVariantPicture);
   console.log(JSON.stringify({
     products: uniqueProducts.size,
     variants: rows.filter((row) => row.variantSku).length,
     productsWithValidVideo: productsWithVideo.size,
-    variantsReadyWithTwoPictures: rows.length - insufficient.length,
-    variantsWithInsufficientPictures: insufficient.length,
+    variantsReadyForEditor: rows.length - insufficient.length,
+    variantsMissingParentOrOwnPicture: insufficient.length,
     samplesToFix: insufficient.slice(0, 20),
   }, null, 2));
   if (insufficient.length) process.exitCode = 1;

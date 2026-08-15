@@ -59,7 +59,7 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
   );
   const expired = connection?.expiresAt ? new Date(connection.expiresAt) <= new Date() : false;
   const activeTab = params?.aba === "anuncios" ? "anuncios" : "publicar";
-  const pilot = candidates.find((candidate) => candidate.scxSku === "SCX-CAN-0021") ?? candidates[0];
+  const pilot = candidates.find((candidate) => candidate.profileStatus === "reviewed") ?? candidates[0];
   const canPublish = Boolean(connection && roleCan(session.role, "catalog:publish"));
   const [initialDraft, listings] = await Promise.all([
     activeTab === "publicar" && pilot ? getMercadoLivreDraft(pilot.id) : null,
