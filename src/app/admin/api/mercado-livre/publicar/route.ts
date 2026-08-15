@@ -12,17 +12,17 @@ export async function POST(request: Request) {
   if (!session) return NextResponse.json({ ok: false, message: "Sessao expirada." }, { status: 401 });
   if (!roleCan(session.role, "catalog:publish")) return NextResponse.json({ ok: false, message: "Sem permissao para publicar." }, { status: 403 });
   const body = await request.json().catch(() => null);
-  if (!body?.productId || body?.confirmed !== true) {
+  if (!body?.productId || body?.confirmed !== true || !Number.isInteger(body?.unitsPerPack)) {
     return NextResponse.json({ ok: false, message: "Confirme conscientemente a publicacao real." }, { status: 400 });
   }
   try {
-    const result = await publishMercadoLivreDraft(String(body.productId));
+    const result = await publishMercadoLivreDraft(String(body.productId), Number(body.unitsPerPack));
     await writeAdminAuditLog({
       actorUserId: session.id,
       action: "catalog_product_updated",
       entityType: "catalog_product",
       entityId: String(body.productId),
-      summary: `Produto publicado diretamente no Mercado Livre: ${result.published.length} variacao(oes).`,
+      summary: `Familia de ${body.unitsPerPack} unidade(s) publicada diretamente no Mercado Livre: ${result.published.length} item(ns).`,
     });
     return NextResponse.json({ ok: true, message: `${result.published.length} variacao(oes) publicadas no Mercado Livre.`, ...result });
   } catch (error) {

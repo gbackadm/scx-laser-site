@@ -103,6 +103,11 @@ test("rejeita resposta do validador que contem erro", () => {
   assert.equal(result.errors.length, 1);
 });
 
+test("rejeita causa de erro mesmo quando a resposta HTTP foi aceita", () => {
+  const result = classifyMercadoLivreValidation(true, { cause: [{ type: "error", code: "invalid" }] });
+  assert.equal(result.accepted, false);
+});
+
 test("bloqueia cor desconhecida, imagem ausente e estoque baixo", () => {
   const invalid = source();
   invalid.variants[0].attributes.Cor = "Roxo";

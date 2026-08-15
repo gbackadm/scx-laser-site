@@ -14,6 +14,8 @@ type Candidate = {
   variantCount: number;
   publishedVariants: number;
   draftStatus: string | null;
+  profileStatus: string;
+  mercadoLivreCategoryId: string | null;
 };
 
 type ApiResult = {
@@ -45,6 +47,13 @@ function previewBody(payload: MercadoLivreDraft["payloads"][number]) {
   return payload.body as PreviewBody;
 }
 
+function preferredKitSize(draft: MercadoLivreDraft | null) {
+  const payload = draft?.payloads.find((item) => item.package.confidence === "confirmed" && item.publishable)
+    ?? draft?.payloads.find((item) => item.publishable)
+    ?? draft?.payloads[0];
+  return payload?.unitsPerPack ?? null;
+}
+
 export function MercadoLivrePublishPanel({
   candidates,
   initialDraft,
@@ -63,13 +72,15 @@ export function MercadoLivrePublishPanel({
   const defaultCandidate = candidates.find((item) => item.scxSku === "SCX-CAN-0021") ?? candidates[0];
   const [productId, setProductId] = useState(defaultCandidate?.id ?? "");
   const [draft, setDraft] = useState(initialDraft);
+  const [selectedKitSize, setSelectedKitSize] = useState<number | null>(() => preferredKitSize(initialDraft));
   const [message, setMessage] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [isPending, startTransition] = useTransition();
   const selected = candidates.find((candidate) => candidate.id === productId);
   const kitSizes = [...new Set((draft?.payloads ?? []).map((payload) => payload.unitsPerPack))];
-  const hasIncompleteFinancials = draft?.payloads.some((payload) => !payload.fees || !Array.isArray(payload.fees.blockReasons)) ?? false;
-  const hasBlockedOffers = (draft?.payloads.some((payload) => !payload.publishable) ?? false) || hasIncompleteFinancials;
+  const selectedPayloads = (draft?.payloads ?? []).filter((payload) => payload.unitsPerPack === selectedKitSize);
+  const hasIncompleteFinancials = selectedPayloads.some((payload) => !payload.fees || !Array.isArray(payload.fees.blockReasons));
+  const hasBlockedOffers = selectedPayloads.some((payload) => !payload.publishable) || hasIncompleteFinancials;
 
   function run(path: string, body: Record<string, unknown>) {
     setMessage(null);
@@ -81,7 +92,10 @@ export function MercadoLivrePublishPanel({
           body: JSON.stringify(body),
         });
         const result = (await response.json().catch(() => null)) as ApiResult | null;
-        if (result?.draft) setDraft(result.draft);
+        if (result?.draft) {
+          setDraft(result.draft);
+          setSelectedKitSize((current) => result.draft?.payloads.some((payload) => payload.unitsPerPack === current) ? current : preferredKitSize(result.draft ?? null));
+        }
         setMessage(result?.message ?? `Operacao concluida com codigo ${response.status}.`);
       } catch {
         setMessage("Nao foi possivel concluir a operacao agora.");
@@ -90,16 +104,16 @@ export function MercadoLivrePublishPanel({
   }
 
   if (!defaultCandidate) {
-    return <p className="border-y border-white/10 py-5 text-sm text-zinc-400">Nenhuma caneta elegivel encontrada.</p>;
+    return <p className="border-y border-white/10 py-5 text-sm text-zinc-400">Nenhum produto elegivel encontrado.</p>;
   }
 
   return (
     <section className="border-t border-white/10 pt-7">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-black uppercase text-laser">Publicacao piloto</p>
-          <h2 className="mt-2 text-xl font-black">Kit por cor</h2>
-          <p className="mt-2 text-sm text-zinc-400">Kits de 50 e 100 usam embalagem proporcional estimada; o kit de 200 usa a caixa-mestre confirmada.</p>
+          <p className="text-xs font-black uppercase text-laser">Publicacao controlada</p>
+          <h2 className="mt-2 text-xl font-black">Produto e familias de kit</h2>
+          <p className="mt-2 text-sm text-zinc-400">Somente categorias revisadas, embalagens confirmadas e ofertas aprovadas pelas regras comerciais podem ser publicadas.</p>
         </div>
         {draft ? (
           <span className={`text-sm font-bold ${draft.status === "validated" || draft.status === "published" ? "text-emerald-300" : draft.status === "error" ? "text-amber-200" : "text-zinc-300"}`}>
@@ -124,10 +138,11 @@ export function MercadoLivrePublishPanel({
           Produto
           <select
             value={productId}
-            disabled={isPending}
+            disabled={isPending || selected?.profileStatus !== "reviewed"}
             onChange={(event) => {
               setProductId(event.target.value);
               setDraft(null);
+              setSelectedKitSize(null);
               setConfirmed(false);
               setMessage(null);
             }}
@@ -135,7 +150,7 @@ export function MercadoLivrePublishPanel({
           >
             {candidates.map((candidate) => (
               <option key={candidate.id} value={candidate.id}>
-                {candidate.scxSku} - {candidate.title} ({candidate.variantCount} cores)
+                {candidate.scxSku} - {candidate.title} ({candidate.variantCount} variacoes){candidate.profileStatus !== "reviewed" ? " - categoria nao configurada" : ""}
               </option>
             ))}
           </select>
@@ -191,12 +206,23 @@ export function MercadoLivrePublishPanel({
               <h3 className="mt-2 text-xl font-black">Ofertas que serao enviadas</h3>
             </div>
             <p className="max-w-xl text-sm leading-6 text-zinc-400">
-              Dentro de cada tamanho de kit, as cores compartilham uma familia e aparecem como opcoes para o comprador.
+              Cada tamanho de kit forma uma familia. As variacoes aprovadas pela categoria aparecem como opcoes para o comprador.
             </p>
           </div>
 
+          <div className="mt-5 flex flex-wrap gap-2" aria-label="Familia de kit">
+            {kitSizes.map((size) => {
+              const family = draft.payloads.filter((payload) => payload.unitsPerPack === size);
+              const blocked = family.some((payload) => !payload.publishable);
+              const estimated = family.some((payload) => payload.package.confidence === "estimated");
+              return <button key={size} type="button" onClick={() => { setSelectedKitSize(size); setConfirmed(false); }} className={`min-h-10 rounded border px-3 text-sm font-black ${selectedKitSize === size ? "border-laser bg-red-950/30 text-white" : "border-white/15 text-zinc-300"}`}>
+                Kit {size} {blocked ? "- bloqueado" : estimated ? "- estimado" : "- confirmado"}
+              </button>;
+            })}
+          </div>
+
           <div className="mt-5 grid gap-4 xl:grid-cols-2">
-            {draft.payloads.map((payload) => {
+            {selectedPayloads.map((payload) => {
               const body = previewBody(payload);
               const pictures = body.pictures ?? [];
               const validation = draft.validationResults.find((item) => (item as { sku?: string })?.sku === payload.sku) as { ok?: boolean; warnings?: Array<{ code?: string; message?: string }>; errors?: unknown[] } | undefined;
@@ -219,13 +245,13 @@ export function MercadoLivrePublishPanel({
                           <p className="mt-1 text-xs text-zinc-500">{payload.sku}</p>
                         </div>
                         <span className={`rounded px-2 py-1 text-xs font-black ${!payload.publishable ? "bg-red-400/10 text-red-200" : payload.financialStatus === "warning" ? "bg-amber-400/10 text-amber-200" : validation?.ok ? "bg-emerald-400/10 text-emerald-200" : "bg-zinc-800 text-zinc-400"}`}>
-                          {!payload.publishable ? "Bloqueado por custo" : payload.financialStatus === "warning" ? "Margem baixa" : validation?.ok ? "Validado" : "A validar"}
+                          {!payload.publishable ? "Bloqueado por regras" : payload.financialStatus === "warning" ? "Margem baixa" : validation?.ok ? "Validado" : "A validar"}
                         </span>
                       </div>
                       <p className="mt-4 text-2xl font-black text-white">{money.format(body.price ?? 0)}</p>
                       <p className="mt-1 text-sm text-zinc-400">{money.format(payload.unitPriceInCents / 100)} por unidade</p>
                       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                        <div><dt className="text-zinc-500">Conteudo</dt><dd className="font-bold">{payload.unitsPerPack} canetas</dd></div>
+                        <div><dt className="text-zinc-500">Conteudo</dt><dd className="font-bold">{payload.unitsPerPack} unidade(s)</dd></div>
                         <div><dt className="text-zinc-500">Estoque ML</dt><dd className="font-bold">{body.available_quantity ?? 0} kits</dd></div>
                         <div><dt className="text-zinc-500">Unidades cobertas</dt><dd className="font-bold">{totalUnits}</dd></div>
                         <div><dt className="text-zinc-500">Plano</dt><dd className="font-bold">Classico</dd></div>
@@ -250,14 +276,14 @@ export function MercadoLivrePublishPanel({
                   <div className="border-t border-white/10 px-4 py-4">
                     <div className="flex items-center gap-2 text-sm font-black"><PackageCheck size={16} className={payload.package.confidence === "confirmed" ? "text-emerald-300" : "text-amber-300"} /> Embalagem {payload.package.confidence === "confirmed" ? "confirmada" : "estimada"}</div>
                     <p className="mt-2 text-sm text-zinc-400">
-                      {payload.package.lengthCm} x {payload.package.widthCm} x {payload.package.heightCm} cm · {payload.package.weightGrams} g
+                      {payload.package.lengthCm} x {payload.package.widthCm} x {payload.package.heightCm} cm | {payload.package.weightGrams} g
                     </p>
                     {payload.package.warning ? <p className="mt-2 text-xs leading-5 text-amber-200">{payload.package.warning}</p> : null}
                     <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
                       {pictures.map((picture, index) => picture.source ? (
                         <div key={`${picture.source}-${index}`} className="w-16 shrink-0">
-                          <img src={picture.source} alt={index === 0 ? `Imagem da cor ${payload.color}` : "Imagem de apoio do produto pai"} className="aspect-square w-full rounded border border-white/10 bg-white object-contain" />
-                          <span className="mt-1 block text-center text-[10px] text-zinc-500">{index === 0 ? "Cor" : "Pai"}</span>
+                          <img src={picture.source} alt={index === 0 ? `Imagem principal de ${payload.color}` : "Imagem de apoio do produto"} className="aspect-square w-full rounded border border-white/10 bg-white object-contain" />
+                          <span className="mt-1 block text-center text-[10px] text-zinc-500">{index === 0 ? "Principal" : "Apoio"}</span>
                         </div>
                       ) : null)}
                     </div>
@@ -297,12 +323,12 @@ export function MercadoLivrePublishPanel({
         <div className="mt-5 grid gap-4 border border-red-500/25 bg-red-950/15 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
           <label className="flex items-start gap-3 text-sm leading-6 text-zinc-200">
             <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 h-4 w-4 accent-red-600" />
-            Confirmo a criacao real de {draft.payloads.length} anuncios para kits de {kitSizes.join(", ")} unidades, separados por cor, no plano Classico.
+            Confirmo a criacao real de {selectedPayloads.length} itens da familia de kit com {selectedKitSize} unidade(s), no plano Classico.
           </label>
           <button
             type="button"
             disabled={isPending || !confirmed || hasBlockedOffers}
-            onClick={() => run("/admin/api/mercado-livre/publicar", { productId, confirmed: true })}
+            onClick={() => run("/admin/api/mercado-livre/publicar", { productId, unitsPerPack: selectedKitSize, confirmed: true })}
             className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-laser px-4 text-sm font-black text-white hover:bg-red-600 disabled:bg-zinc-800 disabled:text-zinc-500"
           >
             <Send size={17} /> Publicar agora

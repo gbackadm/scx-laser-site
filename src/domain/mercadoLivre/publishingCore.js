@@ -19,7 +19,7 @@ export function classifyMercadoLivreValidation(responseOk, body) {
   const errors = causes.filter((cause) => cause?.type === "error");
   const warnings = causes.filter((cause) => cause?.type === "warning");
   return {
-    accepted: Boolean(responseOk) || (causes.length > 0 && errors.length === 0),
+    accepted: errors.length === 0 && (Boolean(responseOk) || causes.length > 0),
     errors,
     warnings,
   };
