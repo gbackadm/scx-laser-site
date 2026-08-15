@@ -26,11 +26,12 @@ const statusLabels: Record<string, string> = { draft: "Edicao pendente", validat
 const fieldClass = "rounded border border-white/15 bg-black px-3 text-sm text-white outline-none transition focus:border-laser";
 
 function bodyOf(payload?: Partial<MercadoLivreDraftPayload>) { return (payload?.body ?? {}) as PreviewBody; }
-function kitSizesOf(draft: MercadoLivreDraft | null) { return [...new Set((draft?.payloads ?? []).map((item) => item.unitsPerPack))]; }
+function hasKitStock(payload: MercadoLivreDraftPayload) { return Number(bodyOf(payload).available_quantity ?? 0) > 0; }
+function kitSizesOf(draft: MercadoLivreDraft | null) { return [...new Set((draft?.payloads ?? []).filter(hasKitStock).map((item) => item.unitsPerPack))]; }
 function preferredKit(draft: MercadoLivreDraft | null) {
-  return draft?.payloads.find((item) => item.package.confidence === "confirmed" && item.publishable)?.unitsPerPack
-    ?? draft?.payloads.find((item) => item.publishable)?.unitsPerPack
-    ?? draft?.payloads[0]?.unitsPerPack ?? null;
+  return draft?.payloads.find((item) => hasKitStock(item) && item.package.confidence === "confirmed" && item.publishable)?.unitsPerPack
+    ?? draft?.payloads.find((item) => hasKitStock(item) && item.publishable)?.unitsPerPack
+    ?? draft?.payloads.find(hasKitStock)?.unitsPerPack ?? null;
 }
 
 export function MercadoLivrePublishPanel({ candidates, initialDraft, commercialRules }: {
@@ -52,7 +53,9 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, commercialR
 
   const selected = candidates.find((item) => item.id === productId);
   const kits = kitSizesOf(draft);
-  const family = (draft?.payloads ?? []).filter((item) => item.unitsPerPack === selectedKit);
+  const kitFamily = (draft?.payloads ?? []).filter((item) => item.unitsPerPack === selectedKit);
+  const family = kitFamily.filter(hasKitStock);
+  const unavailableCount = kitFamily.length - family.length;
   const included = family.filter((item) => item.selectedForPublishing !== false);
   const title = bodyOf(family[0]).family_name ?? draft?.familyName ?? "";
   const description = family[0]?.description ?? draft?.description ?? "";
@@ -111,6 +114,10 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, commercialR
   }
 
   function picturesOf(payload: MercadoLivreDraftPayload) { return (bodyOf(payload).pictures ?? []).map((item) => item.source).filter(Boolean) as string[]; }
+  function pictureAsset(url: string, variantId: string) {
+    return draft?.mediaLibrary.find((item) => item.url === url && item.variantId === variantId)
+      ?? draft?.mediaLibrary.find((item) => item.url === url);
+  }
   function setPictures(offerId: string, sources: string[]) {
     updateFamily((item) => item.offerId === offerId ? { ...item, body: { ...item.body, pictures: [...new Set(sources)].slice(0, 12).map((source) => ({ source })) } } : item);
   }
@@ -171,8 +178,10 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, commercialR
 
       <section className="border-b border-white/10 py-5">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">Biblioteca de imagens</h3><p className="mt-1 text-sm text-zinc-400">Clique nas fotos dentro de cada variacao para inclui-las. A ordem exibida sera a ordem do anuncio.</p></div><input ref={parentFile} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => void upload(event.target.files?.[0], null)}/><button type="button" disabled={Boolean(uploading)} onClick={() => parentFile.current?.click()} className="inline-flex min-h-10 items-center gap-2 rounded border border-white/15 px-3 text-sm font-black">{uploading === "parent" ? <LoaderCircle size={16} className="animate-spin"/> : <ImagePlus size={16}/>} Adicionar ao produto pai</button></div>
-        <div className="mt-4 flex gap-2 overflow-x-auto pb-2">{draft.mediaLibrary.filter((item) => item.owner === "product").map((asset) => <div key={asset.id} className="h-20 w-20 shrink-0 overflow-hidden rounded border border-white/15 bg-white"><img src={asset.url} alt={asset.label} className="h-full w-full object-contain"/></div>)}{!draft.mediaLibrary.some((item) => item.owner === "product") ? <p className="text-sm font-bold text-amber-200">Adicione uma foto do produto pai para usar como principal.</p> : null}</div>
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-2">{draft.mediaLibrary.filter((item) => item.owner === "product").map((asset) => <div key={asset.id} className="h-20 w-20 shrink-0 overflow-hidden rounded border border-white/15 bg-white"><img src={asset.url} alt={asset.label} className="h-full w-full object-contain"/></div>)}{!draft.mediaLibrary.some((item) => item.owner === "product") ? <p className="text-sm font-bold text-amber-200">Adicione uma foto geral do produto para complementar as variacoes.</p> : null}</div>
       </section>
+
+      {unavailableCount > 0 ? <p className="border-b border-white/10 py-3 text-xs text-zinc-500">{unavailableCount} variacao(oes) sem estoque suficiente para este kit foram ocultadas.</p> : null}
 
       <div className="divide-y divide-white/10">
         {family.map((payload) => {
@@ -193,10 +202,10 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, commercialR
               </div>
               <div className="min-w-0">
                 <div className="flex items-center justify-between gap-3"><p className="text-sm font-black">Fotos selecionadas ({pictures.length}/12)</p><label className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded border border-white/15 px-3 text-xs font-black"><input type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => void upload(event.target.files?.[0], payload.variantId, payload.offerId)}/>{uploading === payload.variantId ? <LoaderCircle size={15} className="animate-spin"/> : <ImagePlus size={15}/>} Nova desta variacao</label></div>
-                <div className="mt-3 flex gap-2 overflow-x-auto pb-2">{pictures.map((url,index) => { const asset=draft.mediaLibrary.find((item)=>item.url===url); return <div key={url} className="relative h-28 w-28 shrink-0 overflow-hidden rounded border border-white/20 bg-white"><img src={url} alt="" className="h-full w-full object-contain"/><span className="absolute left-1 top-1 rounded bg-black/80 px-1.5 py-0.5 text-xs font-black">{index+1}</span>{index===0 ? <Star size={15} className="absolute right-1 top-1 fill-yellow-300 text-yellow-300"/> : null}<div className="absolute inset-x-0 bottom-0 flex justify-center gap-1 bg-black/80 p-1"><button type="button" title="Mover para esquerda" onClick={()=>movePicture(payload,index,-1)}><ChevronLeft size={16}/></button><button type="button" title="Definir como principal" onClick={()=>setMainPicture(payload,url)}><Star size={15}/></button><button type="button" title="Remover do anuncio" onClick={()=>setPictures(payload.offerId,pictures.filter((item)=>item!==url))}><Trash2 size={15}/></button><button type="button" title="Mover para direita" onClick={()=>movePicture(payload,index,1)}><ChevronRight size={16}/></button></div>{asset ? <span className="absolute left-1 top-7 rounded bg-black/75 px-1 text-[10px]">{asset.owner === "product" ? "Pai" : asset.label}</span> : null}</div>})}</div>
+                <div className="mt-3 flex gap-2 overflow-x-auto pb-2">{pictures.map((url,index) => { const asset=pictureAsset(url,payload.variantId); return <div key={url} className="relative h-28 w-28 shrink-0 overflow-hidden rounded border border-white/20 bg-white"><img src={url} alt="" className="h-full w-full object-contain"/><span className="absolute left-1 top-1 rounded bg-black/80 px-1.5 py-0.5 text-xs font-black">{index+1}</span>{index===0 ? <Star size={15} className="absolute right-1 top-1 fill-yellow-300 text-yellow-300"/> : null}<div className="absolute inset-x-0 bottom-0 flex justify-center gap-1 bg-black/80 p-1"><button type="button" title="Mover para esquerda" onClick={()=>movePicture(payload,index,-1)}><ChevronLeft size={16}/></button><button type="button" title="Definir como principal" onClick={()=>setMainPicture(payload,url)}><Star size={15}/></button><button type="button" title="Remover do anuncio" onClick={()=>setPictures(payload.offerId,pictures.filter((item)=>item!==url))}><Trash2 size={15}/></button><button type="button" title="Mover para direita" onClick={()=>movePicture(payload,index,1)}><ChevronRight size={16}/></button></div>{asset ? <span className="absolute left-1 top-7 rounded bg-black/75 px-1 text-[10px]">{asset.owner === "product" ? "Pai" : asset.label}</span> : null}</div>})}</div>
                 <p className="mt-3 text-xs font-bold text-zinc-400">Fotos disponiveis. Clique para incluir:</p>
                 <div className="mt-2 flex max-h-52 flex-wrap gap-2 overflow-y-auto">{assets.map((asset) => { const active=pictures.includes(asset.url); return <button key={asset.id} type="button" title={`${active ? "Remover" : "Incluir"}: ${asset.label}`} onClick={()=>setPictures(payload.offerId,active ? pictures.filter((item)=>item!==asset.url) : [...pictures,asset.url])} className={`relative h-16 w-16 overflow-hidden rounded border-2 bg-white ${active ? "border-emerald-400" : asset.variantId===payload.variantId ? "border-sky-400" : "border-transparent"}`}><img src={asset.url} alt={asset.label} className="h-full w-full object-contain"/>{active ? <Check size={16} className="absolute right-0 top-0 rounded-bl bg-emerald-500 p-0.5 text-black"/> : null}</button>})}</div>
-                <p className={`mt-3 text-xs font-bold ${draft.mediaLibrary.find((a)=>a.url===pictures[0])?.owner === "product" && pictures.some((url)=>draft.mediaLibrary.find((a)=>a.url===url)?.variantId===payload.variantId) && pictures.length>=2 ? "text-emerald-300" : "text-amber-200"}`}>A foto 1 deve ser do produto pai e a selecao deve conter uma foto desta variacao.</p>
+                <p className={`mt-3 text-xs font-bold ${draft.mediaLibrary.some((a)=>a.url===pictures[0] && a.variantId===payload.variantId) && pictures.length>=2 ? "text-emerald-300" : "text-amber-200"}`}>A foto 1 deve ser desta variacao. Use a foto geral do produto como apoio nas demais posicoes.</p>
               </div>
             </div>
           </article>;
@@ -204,11 +213,11 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, commercialR
       </div>
 
       <div className="sticky bottom-0 z-20 -mx-4 border-t border-white/15 bg-[#050606]/95 px-4 py-4 backdrop-blur sm:mx-0 sm:px-0">
-        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-bold text-zinc-300">{included.length} variacao(oes) selecionada(s) no kit {selectedKit}</p><div className="flex flex-wrap gap-2">
-          <button type="button" disabled={!dirty || isPending} onClick={saveDraft} className="inline-flex min-h-11 items-center gap-2 rounded bg-white px-4 text-sm font-black text-black disabled:bg-zinc-800 disabled:text-zinc-500">{isPending ? <LoaderCircle size={17} className="animate-spin"/> : <Save size={17}/>} Salvar e recalcular</button>
-          <button type="button" disabled={dirty || isPending || blocked} onClick={()=>request("/admin/api/mercado-livre/validar",{productId,unitsPerPack:selectedKit})} className="inline-flex min-h-11 items-center gap-2 rounded border border-emerald-300/30 px-4 text-sm font-black text-emerald-200 disabled:border-white/10 disabled:text-zinc-600"><CheckCircle2 size={17}/> Validar</button>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-zinc-300">{included.length} variacao(oes) selecionada(s) no kit {selectedKit}</p><p className="mt-1 text-xs text-zinc-500">{dirty ? "Proximo passo: salve para recalcular os custos." : draft.status === "validated" ? "Validacao concluida. Confira tudo abaixo antes de publicar." : blocked ? "Corrija os avisos em vermelho antes de validar." : "Custos atualizados. Proximo passo: validar no Mercado Livre."}</p></div><div className="flex flex-wrap gap-2">
+          <button type="button" disabled={!dirty || isPending} onClick={saveDraft} className="inline-flex min-h-11 items-center gap-2 rounded bg-white px-4 text-sm font-black text-black disabled:bg-zinc-800 disabled:text-zinc-500">{isPending ? <LoaderCircle size={17} className="animate-spin"/> : <Save size={17}/>} 1. Salvar e recalcular</button>
+          <button type="button" disabled={dirty || isPending || blocked} onClick={()=>request("/admin/api/mercado-livre/validar",{productId,unitsPerPack:selectedKit})} className="inline-flex min-h-11 items-center gap-2 rounded border border-emerald-300/30 px-4 text-sm font-black text-emerald-200 disabled:border-white/10 disabled:text-zinc-600"><CheckCircle2 size={17}/> 2. Validar no ML</button>
         </div></div>
-        {draft.status === "validated" && !dirty ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4"><label className="inline-flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={confirmed} onChange={(event)=>setConfirmed(event.target.checked)} className="h-5 w-5 accent-red-600"/> Conferi fotos, variacoes, preco, estoque e custos</label><button type="button" disabled={!confirmed || blocked || isPending} onClick={()=>request("/admin/api/mercado-livre/publicar",{productId,unitsPerPack:selectedKit,confirmed:true})} className="inline-flex min-h-11 items-center gap-2 rounded bg-laser px-5 text-sm font-black disabled:bg-zinc-800 disabled:text-zinc-500"><Send size={17}/> Publicar agora</button></div> : null}
+        {draft.status === "validated" && !dirty ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4"><label className="inline-flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={confirmed} onChange={(event)=>setConfirmed(event.target.checked)} className="h-5 w-5 accent-red-600"/> Conferi fotos, variacoes, preco, estoque e custos</label><button type="button" disabled={!confirmed || blocked || isPending} onClick={()=>request("/admin/api/mercado-livre/publicar",{productId,unitsPerPack:selectedKit,confirmed:true})} className="inline-flex min-h-11 items-center gap-2 rounded bg-laser px-5 text-sm font-black disabled:bg-zinc-800 disabled:text-zinc-500"><Send size={17}/> 3. Publicar agora</button></div> : null}
       </div>
     </> : null}
     {message ? <p className="mt-4 border-y border-white/10 py-3 text-sm font-bold text-zinc-200">{message}</p> : null}

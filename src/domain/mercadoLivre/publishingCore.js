@@ -222,10 +222,8 @@ export function validatePenSource(product) {
     if (!variant.attributes.Cor) errors.push(`Variacao ${variant.scxSku} sem cor.`);
     if (!COLOR_IDS[variant.attributes.Cor]) errors.push(`Cor ${variant.attributes.Cor} sem mapeamento Mercado Livre.`);
     if (!variant.images.length) errors.push(`Variacao ${variant.scxSku} sem imagem propria.`);
-    if (variant.stockQuantity < 1000) errors.push(`Variacao ${variant.scxSku} abaixo do estoque minimo de 1000.`);
     for (const pack of product.packs) {
       if (!variant.offerPricesInCents[String(pack.unitsPerPack)]) errors.push(`Variacao ${variant.scxSku} sem preco para o kit ${pack.unitsPerPack}.`);
-      if (Math.floor(variant.stockQuantity / pack.unitsPerPack) < 1) errors.push(`Variacao ${variant.scxSku} sem estoque para o kit ${pack.unitsPerPack}.`);
     }
   }
   return errors;

@@ -22,6 +22,7 @@ import {
   evaluateListingContent,
   extractYoutubeVideoId,
 } from "@/domain/mercadoLivre/listingQuality.js";
+import { confirmedMasterPack, confirmedUnitPack } from "@/domain/mercadoLivre/packageSource.js";
 import {
   createMercadoLivreDescription,
   createMercadoLivreItem,
@@ -113,44 +114,8 @@ function iso(value: Date | string) {
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
-function localeNumber(value: unknown) {
-  const match = String(value ?? "").replace(",", ".").match(/\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : 0;
-}
-
-function confirmedMasterPack(rawPayload: Record<string, unknown> | null | undefined) {
-  const properties = (rawPayload?.propriedades ?? {}) as Record<string, unknown>;
-  const masterUnits = Math.round(localeNumber(properties["quant-por-caixa"]));
-  const innerUnits = Math.round(localeNumber(properties["quant-por-caixinha"]));
-  const dimensions = String(properties["dimensao-caixa"] ?? "")
-    .replace(/,/g, ".")
-    .match(/\d+(?:\.\d+)?/g)
-    ?.map(Number) ?? [];
-  const weightKg = localeNumber(properties["peso-da-caixa"] ?? properties["peso-caixa"]);
-  return {
-    masterUnits,
-    innerUnits,
-    lengthCm: dimensions[0] ?? 0,
-    widthCm: dimensions[1] ?? 0,
-    heightCm: dimensions[2] ?? 0,
-    weightGrams: Math.round(weightKg * 1000),
-  };
-}
-
-function confirmedUnitPack(rawPayload: Record<string, unknown> | null | undefined) {
-  const properties = (rawPayload?.propriedades ?? {}) as Record<string, unknown>;
-  const dimensions = String(properties["dimensao-produto"] ?? "")
-    .replace(/,/g, ".")
-    .match(/\d+(?:\.\d+)?/g)
-    ?.map(Number) ?? [];
-  const rawHeight = localeNumber(rawPayload?.altura);
-  const rawWidth = localeNumber(rawPayload?.largura);
-  const rawLength = localeNumber(rawPayload?.comprimento);
-  const heightCm = dimensions.length >= 2 ? dimensions[0] : rawHeight;
-  const widthCm = dimensions.length >= 3 ? dimensions[1] : dimensions[1] ?? rawWidth;
-  const lengthCm = dimensions.length >= 3 ? dimensions[2] : dimensions[1] ?? rawLength;
-  const weightKg = localeNumber(properties["peso-do-produto"] ?? rawPayload?.peso);
-  return { heightCm, widthCm, lengthCm, weightGrams: Math.round(weightKg * 1000) };
+function isEditableContentError(reason: string) {
+  return /foto|image|titulo comercial|descricao detalhada/i.test(reason);
 }
 
 function buildGenericDescription(title: string, original: string, unitsPerPack: number, variation: string) {
@@ -293,7 +258,8 @@ async function getPublishingData(productId: string) {
     masterPack: { unitsPerPack: master.masterUnits, heightCm: master.heightCm, widthCm: master.widthCm, lengthCm: master.lengthCm, weightGrams: master.weightGrams },
     unit: confirmedUnitPack(product.raw_payload),
   });
-  const packs = profile.adapter === "pens" ? derivePackOptions(master) : genericPacks.packs.map((pack) => ({ ...pack, warning: pack.warning ?? null }));
+  const usesPenPilot = profile.adapter === "pens" && product.scx_sku === "SCX-CAN-0021";
+  const packs = usesPenPilot ? derivePackOptions(master) : genericPacks.packs.map((pack) => ({ ...pack, warning: pack.warning ?? null }));
   if (!packs.length) throw new Error(genericPacks.errors.map((item) => item.message).join(" ") || "Produto sem embalagem comercial utilizavel.");
   const variants = variantResult.rows.map((row) => ({
       id: String(row.id),
@@ -321,13 +287,14 @@ async function getPublishingData(productId: string) {
 
 export async function generateMercadoLivreDraft(productId: string, actorUserId: string) {
   const { product, profile, packs, variants, images, pricingRule, genericPackErrors } = await getPublishingData(productId);
+  const usesPenPilot = profile.adapter === "pens" && product.scx_sku === "SCX-CAN-0021";
   const connection = await getMercadoLivreConnection();
   if (!connection) throw new Error("Conecte a conta do Mercado Livre antes de gerar a previa.");
   let generated: { familyName: string; description: string; payloads: MercadoLivreDraftPayload[] };
   let source: PenPublishingSource | Record<string, unknown>;
   const rawPayload = (product.raw_payload ?? {}) as Record<string, unknown>;
   const videoId = extractYoutubeVideoId(rawPayload.video);
-  if (profile.adapter === "pens") {
+  if (usesPenPilot) {
     const penSource: PenPublishingSource = { supplierCode: String(product.external_id ?? product.sku), images, videoId, packs, variants };
     source = penSource;
     const errors = validatePenSource(penSource);
@@ -361,7 +328,19 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
       maxPictures: Number(categoryDetailsResponse.body?.settings?.max_pictures_per_item ?? 12),
       variationAxes: profile.variation_axes ?? [],
       packQuantities: packs.map((pack) => pack.unitsPerPack),
-      attributeMappings: (profile.attribute_mapping ?? []) as AttributeMapping[],
+      attributeMappings: Array.isArray(profile.attribute_mapping) && profile.attribute_mapping.length
+        ? profile.attribute_mapping as AttributeMapping[]
+        : profile.adapter === "pens"
+          ? [
+              { targetId: "BRAND", source: "literal", valueName: "Generica" },
+              { targetId: "MODEL", source: "supplierCode" },
+              { targetId: "MATERIALS", source: "inferredMaterial" },
+              { targetId: "EXTERIOR_COLOR", source: "variantAttribute", sourceKey: "Cor" },
+              ...(/escrita em azul/i.test(String(product.description ?? ""))
+                ? [{ targetId: "INK_COLOR", source: "literal", valueName: "Azul" } as AttributeMapping]
+                : []),
+            ]
+          : [],
     };
     const generic = buildGenericUserProductPayloads({ product: normalizedProduct, profile: normalizedProfile, categoryAttributes: categoryResponse.body, packages: packs });
     const byVariant = new Map(variants.map((variant) => [variant.id, variant]));
@@ -394,12 +373,15 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
     const body = payload.body as { pictures?: Array<{ source?: string }> };
     const variant = variants.find((item) => item.id === payload.variantId);
     const orderedSources = [...new Set([
+      variant?.images?.[0],
       images[0],
       ...(variant?.images ?? []),
       ...(body.pictures ?? []).map((picture) => picture.source),
       ...images,
     ].filter(Boolean) as string[])].slice(0, 12);
     body.pictures = orderedSources.map((source) => ({ source }));
+    payload.readinessErrors = (payload.readinessErrors ?? []).filter((reason) => !isEditableContentError(reason));
+    payload.selectedForPublishing = Number((body as { available_quantity?: number }).available_quantity ?? 0) > 0;
   }
   const diagnosticRequests = new Map<string, { source: string; categoryId: string; title: string; pictureType: "thumbnail" | "other" }>();
   for (const payload of generated.payloads) {
@@ -648,26 +630,30 @@ export async function editMercadoLivreDraft(input: {
   if (familyName.length < 15 || familyName.length > 60) throw new Error("O titulo deve ter entre 15 e 60 caracteres.");
   if (description.length < 80 || description.length > 5000) throw new Error("A descricao deve ter entre 80 e 5.000 caracteres.");
   if (!["gold_special", "gold_pro"].includes(input.listingTypeId)) throw new Error("Modalidade de anuncio invalida.");
-  const family = draft.payloads.filter((payload) => payload.unitsPerPack === input.unitsPerPack);
+  const family = draft.payloads.filter((payload) =>
+    payload.unitsPerPack === input.unitsPerPack
+    && Number((payload.body as { available_quantity?: number }).available_quantity ?? 0) > 0
+  );
   if (!family.length) throw new Error("O tamanho de kit escolhido nao existe.");
   const edits = new Map(input.offers.map((item) => [item.offerId, item]));
   if (family.some((payload) => !edits.has(payload.offerId))) throw new Error("As opcoes de variacao chegaram incompletas.");
   if (![...edits.values()].some((item) => item.selected)) throw new Error("Selecione ao menos uma variacao.");
   const mediaLibrary = await listMercadoLivreMediaLibrary(input.productId);
-  const mediaByUrl = new Map(mediaLibrary.map((item) => [item.url, item]));
-  const allowedPictures = new Set(mediaByUrl.keys());
+  const allowedPictures = new Set(mediaLibrary.map((item) => item.url));
   const connection = await getMercadoLivreConnection();
   if (!connection) throw new Error("Conecte a conta do Mercado Livre.");
   const pricingRule = await getGlobalPricingRule();
   const payloads = draft.payloads.map((payload) => {
     if (payload.unitsPerPack !== input.unitsPerPack) return payload;
+    if (Number((payload.body as { available_quantity?: number }).available_quantity ?? 0) < 1) {
+      return { ...payload, selectedForPublishing: false };
+    }
     const edit = edits.get(payload.offerId)!;
     const pictureSources = [...new Set(edit.pictureSources.map((item) => item.trim()).filter(Boolean))];
     if (edit.selected && (pictureSources.length < 2 || pictureSources.length > 12)) throw new Error(`${payload.color}: selecione de 2 a 12 fotos.`);
     if (pictureSources.some((url) => !allowedPictures.has(url))) throw new Error(`${payload.color}: a selecao contem uma foto fora da biblioteca do produto.`);
-    if (edit.selected && mediaByUrl.get(pictureSources[0])?.owner !== "product") throw new Error(`${payload.color}: a primeira foto deve ser do produto pai.`);
-    if (edit.selected && !pictureSources.some((url) => mediaByUrl.get(url)?.variantId === payload.variantId)) {
-      throw new Error(`${payload.color}: inclua ao menos uma foto desta variacao.`);
+    if (edit.selected && !mediaLibrary.some((item) => item.url === pictureSources[0] && item.variantId === payload.variantId)) {
+      throw new Error(`${payload.color}: a primeira foto deve ser desta variacao.`);
     }
     if (!Number.isFinite(edit.price) || edit.price <= 0) throw new Error(`${payload.color}: informe um preco valido.`);
     return {
@@ -687,7 +673,7 @@ export async function editMercadoLivreDraft(input: {
   for (const payload of payloads.filter((item) => item.unitsPerPack === input.unitsPerPack && item.selectedForPublishing !== false)) {
     const body = payload.body as { price: number; listing_type_id: string; category_id: string; family_name: string; pictures: Array<{ source: string }>; attributes?: unknown[] };
     const previousDynamicErrors = new Set((payload.contentReadiness?.checks ?? []).map((check) => `${check.label}: corrija antes de publicar.`));
-    const structuralErrors = (payload.readinessErrors ?? []).filter((reason) => !reason.startsWith("Foto principal") && !previousDynamicErrors.has(reason));
+    const structuralErrors = (payload.readinessErrors ?? []).filter((reason) => !isEditableContentError(reason) && !previousDynamicErrors.has(reason));
     payload.pictureDiagnostics = [];
     for (const [index, picture] of body.pictures.entries()) {
       payload.pictureDiagnostics.push(await diagnosePicture(picture.source, body.category_id, body.family_name, index === 0 ? "thumbnail" : "other"));

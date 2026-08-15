@@ -108,7 +108,7 @@ test("rejeita causa de erro mesmo quando a resposta HTTP foi aceita", () => {
   assert.equal(result.accepted, false);
 });
 
-test("bloqueia cor desconhecida, imagem ausente e estoque baixo", () => {
+test("bloqueia dados ausentes sem impedir outras variacoes por estoque baixo", () => {
   const invalid = source();
   invalid.variants[0].attributes.Cor = "Roxo";
   invalid.variants[0].images = [];
@@ -116,5 +116,5 @@ test("bloqueia cor desconhecida, imagem ausente e estoque baixo", () => {
   const errors = validatePenSource(invalid);
   assert.ok(errors.some((error) => error.includes("sem mapeamento")));
   assert.ok(errors.some((error) => error.includes("sem imagem propria")));
-  assert.ok(errors.some((error) => error.includes("estoque minimo")));
+  assert.ok(!errors.some((error) => error.includes("estoque")));
 });

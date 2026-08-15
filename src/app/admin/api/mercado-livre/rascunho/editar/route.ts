@@ -28,7 +28,14 @@ export async function POST(request: Request) {
         pictureSources: Array.isArray(item.pictureSources) ? item.pictureSources.map(String) : [],
       })),
     });
-    return NextResponse.json({ ok: true, message: "Alteracoes salvas e custos recalculados.", draft });
+    const selected = (draft?.payloads ?? []).filter((item) =>
+      item.unitsPerPack === Number(body.unitsPerPack) && item.selectedForPublishing !== false
+    );
+    const blocked = selected.filter((item) => !item.publishable).length;
+    const message = blocked
+      ? `Custos recalculados. ${blocked} variacao(oes) ainda possuem bloqueios; veja os avisos em vermelho.`
+      : `Custos recalculados. Agora valide ${selected.length} variacao(oes) no Mercado Livre.`;
+    return NextResponse.json({ ok: true, message, draft });
   } catch (error) {
     return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Falha ao salvar alteracoes." }, { status: 400 });
   }

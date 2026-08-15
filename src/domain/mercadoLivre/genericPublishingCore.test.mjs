@@ -198,3 +198,15 @@ test("nao deriva pacotes quando a caixa-mestre esta incompleta", () => {
   assert.equal(result.packs.length, 0);
   assert.equal(result.errors[0].code, "MASTER_PACKAGE_INCOMPLETE");
 });
+
+test("bloqueia apenas a variacao sem estoque e preserva a que pode formar o kit", () => {
+  const input = simpleInput();
+  input.product.variants = [
+    { id: "com-estoque", sku: "SCX-MOU-1", stockQuantity: 10, images: ["https://example.com/a.jpg"], attributes: {}, offerPricesInCents: { "1": 4990 } },
+    { id: "sem-estoque", sku: "SCX-MOU-2", stockQuantity: 0, images: ["https://example.com/b.jpg"], attributes: {}, offerPricesInCents: { "1": 4990 } },
+  ];
+  const result = buildGenericUserProductPayloads(input);
+  assert.equal(result.payloads[0].publishable, true);
+  assert.equal(result.payloads[1].publishable, false);
+  assert.ok(result.payloads[1].errors.some((item) => item.code === "STOCK_MISSING"));
+});
