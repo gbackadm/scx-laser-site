@@ -8,6 +8,7 @@ import {
   LogOut,
   Menu,
   PackagePlus,
+  ShoppingBag,
   Store,
   Truck,
   X,
@@ -36,6 +37,7 @@ const navigation = [
   { href: "/admin/importacao", label: "Asia Import", icon: Truck, permission: "supplier:import" as const },
   { href: "/admin/precos", label: "Precos", icon: DollarSign, permission: "catalog:view" as const },
   { href: "/admin/olist", label: "Olist", icon: Store, permission: "supplier:import" as const },
+  { href: "/admin/mercado-livre", label: "Mercado Livre", icon: ShoppingBag, permission: "supplier:import" as const },
 ];
 
 const roleLabels: Record<UserRole, string> = {
