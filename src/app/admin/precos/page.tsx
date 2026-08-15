@@ -157,9 +157,8 @@ export default async function AdminPricingPage({
             Regra global de precos
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-300">
-            Esta regra ainda nao altera produtos automaticamente. Ela define o
-            padrao que vamos usar depois para sugerir ou expor precos no
-            catalogo publico.
+            Define os precos do catalogo e os bloqueios obrigatorios usados
+            antes de publicar ofertas nos marketplaces.
           </p>
 
           <div className="mt-6 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
@@ -220,6 +219,33 @@ export default async function AdminPricingPage({
                     className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500"
                   />
                 </label>
+              </div>
+
+              <div className="rounded-md border border-amber-300/20 bg-amber-950/10 p-4">
+                <h2 className="text-lg font-black">Protecao de marketplace</h2>
+                <p className="mt-2 text-sm leading-6 text-zinc-400">A oferta fica bloqueada quando nao cumprir qualquer limite abaixo.</p>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <label className="grid gap-2 text-sm font-bold text-zinc-200">
+                    Resultado minimo por pedido
+                    <input name="marketplaceMinProfit" inputMode="decimal" defaultValue={formatMoneyInput(pricingRule.marketplaceMinProfitAmountInCents)} disabled={!canEditPricing} className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500" />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold text-zinc-200">
+                    Retorno minimo sobre o custo (%)
+                    <input name="marketplaceMinReturnPercentage" type="number" min={0} step="0.1" defaultValue={pricingRule.marketplaceMinReturnPercentage} disabled={!canEditPricing} className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500" />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold text-zinc-200">
+                    Custo maximo da mercadoria
+                    <input name="marketplaceMaxProductCost" inputMode="decimal" defaultValue={formatMoneyInput(pricingRule.marketplaceMaxProductCostAmountInCents)} disabled={!canEditPricing} className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500" />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold text-zinc-200">
+                    Custo operacional por pedido
+                    <input name="marketplaceOperationalCost" inputMode="decimal" defaultValue={formatMoneyInput(pricingRule.marketplaceOperationalCostAmountInCents)} disabled={!canEditPricing} className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500" />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold text-zinc-200 sm:col-span-2">
+                    Reserva para impostos e outros custos (%)
+                    <input name="marketplaceTaxReservePercentage" type="number" min={0} step="0.1" defaultValue={pricingRule.marketplaceTaxReservePercentage} disabled={!canEditPricing} className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500" />
+                  </label>
+                </div>
               </div>
 
               <label className="grid gap-2 text-sm font-bold text-zinc-200">

@@ -12,6 +12,7 @@ import {
   getMercadoLivreDraft,
   listMercadoLivreCandidates,
 } from "@/domain/mercadoLivre/publishingRepository";
+import { getGlobalPricingRule } from "@/domain/pricing/rules";
 
 export const metadata = { title: "Admin SCX Laser | Mercado Livre" };
 export const dynamic = "force-dynamic";
@@ -39,12 +40,13 @@ const errorMessages: Record<string, string> = {
 };
 
 export default async function MercadoLivrePage({ searchParams }: PageProps) {
-  const [session, params, connection, pending, candidates] = await Promise.all([
+  const [session, params, connection, pending, candidates, pricingRule] = await Promise.all([
     requireAdminSession(),
     searchParams,
     getMercadoLivreConnection(),
     countPendingMercadoLivreNotifications(),
     listMercadoLivreCandidates(),
+    getGlobalPricingRule(),
   ]);
   const canConnect = roleCan(session.role, "supplier:import");
   const configured = Boolean(
@@ -151,7 +153,13 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
           </dl>
         </section>
         {connection && roleCan(session.role, "catalog:publish") ? (
-          <MercadoLivrePublishPanel candidates={candidates} initialDraft={initialDraft} />
+          <MercadoLivrePublishPanel candidates={candidates} initialDraft={initialDraft} commercialRules={{
+            minProfitInCents: pricingRule.marketplaceMinProfitAmountInCents,
+            minReturnPercentage: pricingRule.marketplaceMinReturnPercentage,
+            maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
+            operationalCostInCents: pricingRule.marketplaceOperationalCostAmountInCents,
+            taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
+          }} />
         ) : null}
       </div>
     </main>

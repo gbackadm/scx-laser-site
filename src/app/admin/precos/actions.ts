@@ -68,6 +68,11 @@ export async function saveGlobalPricingRule(formData: FormData) {
       formData.get("publicationStockMinQuantity"),
       1000,
     ),
+    marketplaceMinProfitAmountInCents: parseMoneyToCents(formData.get("marketplaceMinProfit")),
+    marketplaceMinReturnPercentage: parseDecimal(formData.get("marketplaceMinReturnPercentage"), 50),
+    marketplaceMaxProductCostAmountInCents: parseMoneyToCents(formData.get("marketplaceMaxProductCost")),
+    marketplaceOperationalCostAmountInCents: parseMoneyToCents(formData.get("marketplaceOperationalCost")),
+    marketplaceTaxReservePercentage: parseDecimal(formData.get("marketplaceTaxReservePercentage"), 0),
     roundingMode: parseRoundingMode(formData.get("roundingMode")),
     tiers: parseBatchTiers(formData),
   });

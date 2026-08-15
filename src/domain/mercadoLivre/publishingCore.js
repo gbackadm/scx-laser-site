@@ -25,22 +25,47 @@ export function classifyMercadoLivreValidation(responseOk, body) {
   };
 }
 
-export function classifyOfferFinancials({ priceInCents, saleFeeInCents, shippingCostInCents, productCostInCents, warningMarginPercentage = 15 }) {
+export function classifyOfferFinancials({
+  priceInCents,
+  saleFeeInCents,
+  shippingCostInCents,
+  productCostInCents,
+  operationalCostInCents = 0,
+  taxReservePercentage = 0,
+  minProfitInCents = 0,
+  minReturnPercentage = 0,
+  maxProductCostInCents = Number.MAX_SAFE_INTEGER,
+  warningMarginPercentage = 15,
+}) {
   const netRevenueInCents = priceInCents - saleFeeInCents - shippingCostInCents;
   const contributionInCents = netRevenueInCents - productCostInCents;
-  const contributionPercentage = priceInCents > 0
-    ? Math.round((contributionInCents / priceInCents) * 10000) / 100
+  const taxReserveInCents = Math.round(priceInCents * (taxReservePercentage / 100));
+  const estimatedProfitInCents = contributionInCents - operationalCostInCents - taxReserveInCents;
+  const profitPercentage = priceInCents > 0
+    ? Math.round((estimatedProfitInCents / priceInCents) * 10000) / 100
     : 0;
+  const returnPercentage = productCostInCents > 0
+    ? Math.round((estimatedProfitInCents / productCostInCents) * 10000) / 100
+    : 0;
+  const blockReasons = [];
+  if (productCostInCents > maxProductCostInCents) blockReasons.push("Custo da mercadoria acima do limite configurado.");
+  if (estimatedProfitInCents < minProfitInCents) blockReasons.push("Resultado estimado abaixo do minimo por pedido.");
+  if (returnPercentage < minReturnPercentage) blockReasons.push("Retorno sobre o custo abaixo do minimo configurado.");
   return {
     saleFeeInCents,
     shippingCostInCents,
     netRevenueInCents,
     contributionInCents,
-    contributionPercentage,
-    publishable: contributionInCents > 0,
-    financialStatus: contributionInCents <= 0
+    contributionPercentage: profitPercentage,
+    operationalCostInCents,
+    taxReserveInCents,
+    estimatedProfitInCents,
+    returnPercentage,
+    blockReasons,
+    publishable: blockReasons.length === 0,
+    financialStatus: blockReasons.length > 0
       ? "blocked"
-      : contributionPercentage < warningMarginPercentage ? "warning" : "healthy",
+      : profitPercentage < warningMarginPercentage ? "warning" : "healthy",
   };
 }
 

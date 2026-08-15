@@ -17,6 +17,20 @@ test("classifica margem saudavel, baixa e negativa antes da publicacao", () => {
   assert.equal(blocked.publishable, false);
 });
 
+test("bloqueia lucro minimo, retorno e custo maximo configurados", () => {
+  const lowProfit = classifyOfferFinancials({ priceInCents: 10000, saleFeeInCents: 1000, shippingCostInCents: 1000, productCostInCents: 5000, operationalCostInCents: 1000, minProfitInCents: 2500 });
+  assert.equal(lowProfit.publishable, false);
+  assert.match(lowProfit.blockReasons.join(" "), /Resultado estimado/);
+
+  const lowReturn = classifyOfferFinancials({ priceInCents: 10000, saleFeeInCents: 1000, shippingCostInCents: 1000, productCostInCents: 6000, minReturnPercentage: 50 });
+  assert.equal(lowReturn.publishable, false);
+  assert.match(lowReturn.blockReasons.join(" "), /Retorno sobre o custo/);
+
+  const expensive = classifyOfferFinancials({ priceInCents: 900000, saleFeeInCents: 0, shippingCostInCents: 0, productCostInCents: 500001, maxProductCostInCents: 500000 });
+  assert.equal(expensive.publishable, false);
+  assert.match(expensive.blockReasons.join(" "), /Custo da mercadoria/);
+});
+
 function source() {
   return {
     supplierCode: "CM1027S",

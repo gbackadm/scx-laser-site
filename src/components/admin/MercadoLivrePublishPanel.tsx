@@ -1,6 +1,7 @@
 "use client";
 
-import { CheckCircle2, FileSearch, Images, LoaderCircle, PackageCheck, Send } from "lucide-react";
+import { CheckCircle2, FileSearch, Images, LoaderCircle, PackageCheck, Send, SlidersHorizontal } from "lucide-react";
+import Link from "next/link";
 import { useState, useTransition } from "react";
 
 import type { MercadoLivreDraft } from "@/domain/mercadoLivre/publishingRepository";
@@ -47,9 +48,17 @@ function previewBody(payload: MercadoLivreDraft["payloads"][number]) {
 export function MercadoLivrePublishPanel({
   candidates,
   initialDraft,
+  commercialRules,
 }: {
   candidates: Candidate[];
   initialDraft: MercadoLivreDraft | null;
+  commercialRules: {
+    minProfitInCents: number;
+    minReturnPercentage: number;
+    maxProductCostInCents: number;
+    operationalCostInCents: number;
+    taxReservePercentage: number;
+  };
 }) {
   const defaultCandidate = candidates.find((item) => item.scxSku === "SCX-CAN-0021") ?? candidates[0];
   const [productId, setProductId] = useState(defaultCandidate?.id ?? "");
@@ -59,7 +68,8 @@ export function MercadoLivrePublishPanel({
   const [isPending, startTransition] = useTransition();
   const selected = candidates.find((candidate) => candidate.id === productId);
   const kitSizes = [...new Set((draft?.payloads ?? []).map((payload) => payload.unitsPerPack))];
-  const hasBlockedOffers = draft?.payloads.some((payload) => !payload.publishable) ?? false;
+  const hasIncompleteFinancials = draft?.payloads.some((payload) => !payload.fees || !Array.isArray(payload.fees.blockReasons)) ?? false;
+  const hasBlockedOffers = (draft?.payloads.some((payload) => !payload.publishable) ?? false) || hasIncompleteFinancials;
 
   function run(path: string, body: Record<string, unknown>) {
     setMessage(null);
@@ -98,7 +108,18 @@ export function MercadoLivrePublishPanel({
         ) : null}
       </div>
 
-      <div className="mt-5 grid gap-4 border-y border-white/10 py-5 lg:grid-cols-[1fr_auto] lg:items-end">
+      <div className="mt-5 grid gap-4 border-y border-white/10 py-4 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto] lg:items-center">
+        <div><p className="text-xs text-zinc-500">Resultado minimo</p><p className="mt-1 font-black">{money.format(commercialRules.minProfitInCents / 100)}</p></div>
+        <div><p className="text-xs text-zinc-500">Retorno minimo</p><p className="mt-1 font-black">{commercialRules.minReturnPercentage.toLocaleString("pt-BR")}%</p></div>
+        <div><p className="text-xs text-zinc-500">Custo maximo</p><p className="mt-1 font-black">{money.format(commercialRules.maxProductCostInCents / 100)}</p></div>
+        <div><p className="text-xs text-zinc-500">Custo operacional</p><p className="mt-1 font-black">{money.format(commercialRules.operationalCostInCents / 100)}</p></div>
+        <div><p className="text-xs text-zinc-500">Reserva</p><p className="mt-1 font-black">{commercialRules.taxReservePercentage.toLocaleString("pt-BR")}%</p></div>
+        <Link href="/admin/precos" className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-white/15 px-3 text-sm font-black text-zinc-200 hover:border-white/30">
+          <SlidersHorizontal size={16} /> Alterar
+        </Link>
+      </div>
+
+      <div className="grid gap-4 border-b border-white/10 py-5 lg:grid-cols-[1fr_auto] lg:items-end">
         <label className="grid gap-2 text-sm font-bold text-zinc-300">
           Produto
           <select
@@ -131,7 +152,7 @@ export function MercadoLivrePublishPanel({
           </button>
           <button
             type="button"
-            disabled={isPending || !draft}
+            disabled={isPending || !draft || hasIncompleteFinancials}
             onClick={() => run("/admin/api/mercado-livre/validar", { productId })}
             className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-emerald-300/30 px-4 text-sm font-black text-emerald-200 hover:border-emerald-200 disabled:border-white/10 disabled:text-zinc-600"
           >
@@ -214,10 +235,14 @@ export function MercadoLivrePublishPanel({
                           <div><dt className="text-zinc-500">Comissao ML</dt><dd className="font-bold text-amber-100">-{money.format(payload.fees.saleFeeInCents / 100)}</dd></div>
                           <div><dt className="text-zinc-500">Frete estimado</dt><dd className="font-bold text-amber-100">-{money.format(payload.fees.shippingCostInCents / 100)}</dd></div>
                           <div><dt className="text-zinc-500">Custo do produto</dt><dd className="font-bold">-{money.format(payload.productCostInCents / 100)}</dd></div>
-                          <div><dt className="text-zinc-500">Resultado estimado</dt><dd className={`font-black ${payload.publishable ? "text-emerald-200" : "text-red-200"}`}>{money.format(payload.fees.contributionInCents / 100)}</dd></div>
-                          <div className="col-span-2"><dt className="text-zinc-500">Margem antes de impostos e outros custos</dt><dd className={`font-black ${payload.publishable ? "text-emerald-200" : "text-red-200"}`}>{payload.fees.contributionPercentage.toLocaleString("pt-BR")}%</dd></div>
+                          <div><dt className="text-zinc-500">Custo operacional</dt><dd className="font-bold">-{money.format((payload.fees.operationalCostInCents ?? 0) / 100)}</dd></div>
+                          <div><dt className="text-zinc-500">Reserva configurada</dt><dd className="font-bold">-{money.format((payload.fees.taxReserveInCents ?? 0) / 100)}</dd></div>
+                          <div><dt className="text-zinc-500">Resultado estimado</dt><dd className={`font-black ${payload.publishable ? "text-emerald-200" : "text-red-200"}`}>{money.format((payload.fees.estimatedProfitInCents ?? payload.fees.contributionInCents) / 100)}</dd></div>
+                          <div><dt className="text-zinc-500">Retorno sobre o custo</dt><dd className={`font-black ${payload.publishable ? "text-emerald-200" : "text-red-200"}`}>{payload.fees.returnPercentage == null ? "Recalcular" : `${payload.fees.returnPercentage.toLocaleString("pt-BR")}%`}</dd></div>
+                          <div className="col-span-2"><dt className="text-zinc-500">Margem estimada sobre a venda</dt><dd className={`font-black ${payload.publishable ? "text-emerald-200" : "text-red-200"}`}>{payload.fees.contributionPercentage.toLocaleString("pt-BR")}%</dd></div>
                         </dl>
                       ) : null}
+                      {(payload.fees?.blockReasons ?? []).map((reason) => <p key={reason} className="mt-2 text-xs leading-5 text-red-200">{reason}</p>)}
                       {payload.financialStatus === "warning" ? <p className="mt-3 text-xs leading-5 text-amber-200">Margem inferior a 15% antes de impostos e outros custos. Revise antes de publicar.</p> : null}
                     </div>
                   </div>
@@ -265,6 +290,8 @@ export function MercadoLivrePublishPanel({
       ) : null}
 
       {message ? <p className="border-y border-white/10 py-3 text-sm font-bold text-zinc-200">{message}</p> : null}
+
+      {hasIncompleteFinancials ? <p className="border-y border-amber-300/20 bg-amber-950/15 px-3 py-3 text-sm font-bold text-amber-100">Esta previa foi criada antes das regras comerciais atuais. Gere uma nova previa para liberar a validacao e a publicacao.</p> : null}
 
       {draft?.status === "validated" ? (
         <div className="mt-5 grid gap-4 border border-red-500/25 bg-red-950/15 p-4 sm:grid-cols-[1fr_auto] sm:items-center">

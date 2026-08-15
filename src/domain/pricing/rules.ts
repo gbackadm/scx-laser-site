@@ -16,6 +16,11 @@ export type PricingRule = {
   lossPercentage: number;
   minimumPriceAmountInCents: number;
   publicationStockMinQuantity: number;
+  marketplaceMinProfitAmountInCents: number;
+  marketplaceMinReturnPercentage: number;
+  marketplaceMaxProductCostAmountInCents: number;
+  marketplaceOperationalCostAmountInCents: number;
+  marketplaceTaxReservePercentage: number;
   roundingMode: PricingRoundingMode;
 };
 
@@ -51,6 +56,11 @@ type PricingRuleRow = {
   loss_percentage: string | number;
   minimum_price_amount_in_cents: number;
   publication_stock_min_quantity: number;
+  marketplace_min_profit_amount_in_cents: number;
+  marketplace_min_return_percentage: string | number;
+  marketplace_max_product_cost_amount_in_cents: number;
+  marketplace_operational_cost_amount_in_cents: number;
+  marketplace_tax_reserve_percentage: string | number;
   rounding_mode: PricingRoundingMode;
 };
 
@@ -67,6 +77,11 @@ export type PricingRuleInput = {
   lossPercentage: number;
   minimumPriceAmountInCents: number;
   publicationStockMinQuantity: number;
+  marketplaceMinProfitAmountInCents: number;
+  marketplaceMinReturnPercentage: number;
+  marketplaceMaxProductCostAmountInCents: number;
+  marketplaceOperationalCostAmountInCents: number;
+  marketplaceTaxReservePercentage: number;
   roundingMode: PricingRoundingMode;
   tiers: PricingBatchTierInput[];
 };
@@ -85,6 +100,11 @@ export const defaultPricingRule: PricingRule = {
   lossPercentage: 0,
   minimumPriceAmountInCents: 0,
   publicationStockMinQuantity: 1000,
+  marketplaceMinProfitAmountInCents: 5000,
+  marketplaceMinReturnPercentage: 50,
+  marketplaceMaxProductCostAmountInCents: 500000,
+  marketplaceOperationalCostAmountInCents: 0,
+  marketplaceTaxReservePercentage: 0,
   roundingMode: "ending_90",
 };
 
@@ -160,6 +180,11 @@ function mapPricingRule(row: PricingRuleRow): PricingRule {
     lossPercentage: Number(row.loss_percentage),
     minimumPriceAmountInCents: row.minimum_price_amount_in_cents,
     publicationStockMinQuantity: row.publication_stock_min_quantity ?? 1000,
+    marketplaceMinProfitAmountInCents: row.marketplace_min_profit_amount_in_cents ?? 5000,
+    marketplaceMinReturnPercentage: Number(row.marketplace_min_return_percentage ?? 50),
+    marketplaceMaxProductCostAmountInCents: row.marketplace_max_product_cost_amount_in_cents ?? 500000,
+    marketplaceOperationalCostAmountInCents: row.marketplace_operational_cost_amount_in_cents ?? 0,
+    marketplaceTaxReservePercentage: Number(row.marketplace_tax_reserve_percentage ?? 0),
     roundingMode: row.rounding_mode,
   };
 }
@@ -332,16 +357,26 @@ export async function updateGlobalPricingRule(input: PricingRuleInput) {
           loss_percentage,
           minimum_price_amount_in_cents,
           publication_stock_min_quantity,
+          marketplace_min_profit_amount_in_cents,
+          marketplace_min_return_percentage,
+          marketplace_max_product_cost_amount_in_cents,
+          marketplace_operational_cost_amount_in_cents,
+          marketplace_tax_reserve_percentage,
           rounding_mode,
           updated_at
         )
-        VALUES ($1, 'Regra global padrao', 'global', $2, $3, $4, $5, $6, $7, now())
+        VALUES ($1, 'Regra global padrao', 'global', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
         ON CONFLICT (id) DO UPDATE SET
           cost_multiplier = EXCLUDED.cost_multiplier,
           fixed_fee_amount_in_cents = EXCLUDED.fixed_fee_amount_in_cents,
           loss_percentage = EXCLUDED.loss_percentage,
           minimum_price_amount_in_cents = EXCLUDED.minimum_price_amount_in_cents,
           publication_stock_min_quantity = EXCLUDED.publication_stock_min_quantity,
+          marketplace_min_profit_amount_in_cents = EXCLUDED.marketplace_min_profit_amount_in_cents,
+          marketplace_min_return_percentage = EXCLUDED.marketplace_min_return_percentage,
+          marketplace_max_product_cost_amount_in_cents = EXCLUDED.marketplace_max_product_cost_amount_in_cents,
+          marketplace_operational_cost_amount_in_cents = EXCLUDED.marketplace_operational_cost_amount_in_cents,
+          marketplace_tax_reserve_percentage = EXCLUDED.marketplace_tax_reserve_percentage,
           rounding_mode = EXCLUDED.rounding_mode,
           is_active = true,
           updated_at = now()
@@ -353,6 +388,11 @@ export async function updateGlobalPricingRule(input: PricingRuleInput) {
         input.lossPercentage,
         input.minimumPriceAmountInCents,
         input.publicationStockMinQuantity,
+        input.marketplaceMinProfitAmountInCents,
+        input.marketplaceMinReturnPercentage,
+        input.marketplaceMaxProductCostAmountInCents,
+        input.marketplaceOperationalCostAmountInCents,
+        input.marketplaceTaxReservePercentage,
         input.roundingMode,
       ],
     );

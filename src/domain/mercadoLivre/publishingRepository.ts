@@ -42,6 +42,11 @@ export type MercadoLivreDraftPayload = {
     netRevenueInCents: number;
     contributionInCents: number;
     contributionPercentage: number;
+    operationalCostInCents: number;
+    taxReserveInCents: number;
+    estimatedProfitInCents: number;
+    returnPercentage: number;
+    blockReasons: string[];
   };
   package: {
     unitsPerPack: number;
@@ -189,11 +194,11 @@ async function getPenSource(productId: string) {
       images: (row.images ?? []).map(String),
     })),
   };
-  return { source, product };
+  return { source, product, pricingRule };
 }
 
 export async function generateMercadoLivreDraft(productId: string, actorUserId: string) {
-  const { source, product } = await getPenSource(productId);
+  const { source, product, pricingRule } = await getPenSource(productId);
   const errors = validatePenSource(source);
   if (errors.length) throw new Error(errors.join(" "));
   const generated = buildPenUserProductPayloads(source);
@@ -215,7 +220,17 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
     const shippingCostInCents = Math.round(Number(shippingResponse.body?.coverage?.all_country?.list_cost ?? 0) * 100);
     for (const payload of packPayloads) {
       const priceInCents = Math.round(Number((payload.body as { price: number }).price) * 100);
-      const financials = classifyOfferFinancials({ priceInCents, saleFeeInCents, shippingCostInCents, productCostInCents: payload.productCostInCents });
+      const financials = classifyOfferFinancials({
+        priceInCents,
+        saleFeeInCents,
+        shippingCostInCents,
+        productCostInCents: payload.productCostInCents,
+        operationalCostInCents: pricingRule.marketplaceOperationalCostAmountInCents,
+        taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
+        minProfitInCents: pricingRule.marketplaceMinProfitAmountInCents,
+        minReturnPercentage: pricingRule.marketplaceMinReturnPercentage,
+        maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
+      });
       payload.fees = financials;
       payload.publishable = financials.publishable;
       payload.financialStatus = financials.financialStatus;
@@ -318,6 +333,9 @@ export async function publishMercadoLivreDraft(productId: string) {
   const draft = await getMercadoLivreDraft(productId);
   if (!draft || draft.status !== "validated") {
     throw new Error("O rascunho precisa passar pelo validador antes da publicacao.");
+  }
+  if (draft.payloads.some((payload: MercadoLivreDraftPayload) => !payload.fees || !Array.isArray(payload.fees.blockReasons))) {
+    throw new Error("A previa financeira esta desatualizada. Gere e valide uma nova previa antes de publicar.");
   }
   if (draft.payloads.some((payload: MercadoLivreDraftPayload) => !payload.publishable)) {
     throw new Error("Existem ofertas sem resultado positivo. Corrija a precificacao antes de publicar.");

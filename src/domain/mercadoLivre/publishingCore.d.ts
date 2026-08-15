@@ -31,6 +31,11 @@ export function classifyOfferFinancials(input: {
   saleFeeInCents: number;
   shippingCostInCents: number;
   productCostInCents: number;
+  operationalCostInCents?: number;
+  taxReservePercentage?: number;
+  minProfitInCents?: number;
+  minReturnPercentage?: number;
+  maxProductCostInCents?: number;
   warningMarginPercentage?: number;
 }): {
   saleFeeInCents: number;
@@ -38,6 +43,11 @@ export function classifyOfferFinancials(input: {
   netRevenueInCents: number;
   contributionInCents: number;
   contributionPercentage: number;
+  operationalCostInCents: number;
+  taxReserveInCents: number;
+  estimatedProfitInCents: number;
+  returnPercentage: number;
+  blockReasons: string[];
   publishable: boolean;
   financialStatus: "healthy" | "warning" | "blocked";
 };
@@ -70,6 +80,11 @@ export function buildPenUserProductPayloads(product: PenPublishingSource): {
       netRevenueInCents: number;
       contributionInCents: number;
       contributionPercentage: number;
+      operationalCostInCents: number;
+      taxReserveInCents: number;
+      estimatedProfitInCents: number;
+      returnPercentage: number;
+      blockReasons: string[];
     };
     package: PenPublishingSource["packs"][number];
     body: Record<string, unknown>;
