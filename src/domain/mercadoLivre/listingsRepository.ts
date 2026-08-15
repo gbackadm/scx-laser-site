@@ -29,6 +29,9 @@ export type ManagedMercadoLivreListing = {
   linkedToCatalog: boolean;
   groupKey: string;
   groupLabel: string;
+  qualityScore: number | null;
+  qualityLevel: string | null;
+  qualityPendingActions: string[];
 };
 
 type MercadoLivreItem = {
@@ -50,6 +53,28 @@ type MercadoLivreItem = {
 
 type MultiGetResult = { code?: number; body?: MercadoLivreItem };
 type AccountSearch = { paging?: { total?: number; limit?: number; offset?: number }; results?: string[] };
+type ItemPerformance = {
+  score?: number;
+  level_wording?: string;
+  buckets?: Array<{
+    key?: string;
+    title?: string;
+    status?: string;
+    variables?: Array<{
+      key?: string;
+      title?: string;
+      status?: string;
+      rules?: Array<{
+        key?: string;
+        title?: string;
+        status?: string;
+        wordings?: Array<{ title?: string; label?: string }> | { title?: string; label?: string };
+      }>;
+    }>;
+  }>;
+};
+
+const performanceCache = new Map<string, { expiresAt: number; value: ItemPerformance | null }>();
 
 function chunks<T>(items: T[], size: number) {
   return Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size));
@@ -99,6 +124,34 @@ async function listAccountItemIds(userId: string) {
   return [...new Set(ids)];
 }
 
+async function getItemPerformance(itemId: string) {
+  const cached = performanceCache.get(itemId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const response = await mercadoLivreRequest<ItemPerformance>(`/item/${itemId}/performance`);
+  const value = response.ok ? response.body : null;
+  performanceCache.set(itemId, { expiresAt: Date.now() + 10 * 60 * 1000, value });
+  return value;
+}
+
+function pendingPerformanceActions(performance: ItemPerformance | null) {
+  const pending = (status: unknown) => String(status ?? "").toUpperCase() === "PENDING";
+  return (performance?.buckets ?? []).flatMap((bucket) => {
+    if (!pending(bucket.status)) return [];
+    const variableActions = (bucket.variables ?? []).flatMap((variable) => {
+      if (!pending(variable.status)) return [];
+      const ruleActions = (variable.rules ?? []).filter((rule) => pending(rule.status)).map((rule) => {
+        const wordings = Array.isArray(rule.wordings) ? rule.wordings : rule.wordings ? [rule.wordings] : [];
+        return wordings.map((wording) => wording.title ?? wording.label).find(Boolean) ?? rule.title ?? rule.key;
+      });
+      return ruleActions.length ? ruleActions : [variable.title ?? variable.key];
+    });
+    return variableActions.length ? variableActions : [bucket.title ?? bucket.key];
+  })
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .filter((value, index, all) => all.indexOf(value) === index);
+}
+
 export async function listManagedMercadoLivreListings(): Promise<ManagedMercadoLivreListing[]> {
   const connection = await getMercadoLivreConnection();
   if (!connection) return [];
@@ -132,6 +185,13 @@ export async function listManagedMercadoLivreListings(): Promise<ManagedMercadoL
     }
   }
 
+  const performanceByItemId = new Map<string, ItemPerformance | null>();
+  const measurableIds = ids.filter((itemId) => ["active", "paused"].includes(String(liveItems.get(itemId)?.status ?? "")));
+  for (const batch of chunks(measurableIds, 5)) {
+    const values = await Promise.all(batch.map(async (itemId) => [itemId, await getItemPerformance(itemId)] as const));
+    values.forEach(([itemId, performance]) => performanceByItemId.set(itemId, performance));
+  }
+
   return ids.map((itemId) => {
     const row = localByItemId.get(itemId);
     const saved = (row?.raw_response?.item ?? row?.raw_response ?? {}) as MercadoLivreItem;
@@ -145,6 +205,7 @@ export async function listManagedMercadoLivreListings(): Promise<ManagedMercadoL
     const family = item.family_name ?? null;
     const inferredLabel = inferredGroupLabel(item);
     const groupKey = row ? `catalog:${row.product_id}` : `ml-title:${inferredLabel.toLocaleLowerCase("pt-BR")}`;
+    const performance = performanceByItemId.get(itemId) ?? null;
     return {
       offerId: row ? String(row.offer_id) : null,
       itemId,
@@ -168,6 +229,9 @@ export async function listManagedMercadoLivreListings(): Promise<ManagedMercadoL
       linkedToCatalog,
       groupKey,
       groupLabel: linkedToCatalog ? `${productTitle} (${productSku})` : inferredLabel,
+      qualityScore: Number.isFinite(Number(performance?.score)) ? Number(performance?.score) : null,
+      qualityLevel: performance?.level_wording ? String(performance.level_wording) : null,
+      qualityPendingActions: pendingPerformanceActions(performance),
     };
   }).sort((left, right) => left.groupLabel.localeCompare(right.groupLabel, "pt-BR") || (left.unitsPerPack ?? 0) - (right.unitsPerPack ?? 0) || left.variation.localeCompare(right.variation, "pt-BR"));
 }

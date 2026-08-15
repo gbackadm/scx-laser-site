@@ -1,6 +1,7 @@
 export type PenPublishingSource = {
   supplierCode: string;
   images: string[];
+  videoId?: string | null;
   packs: Array<{
     unitsPerPack: number;
     heightCm: number;
@@ -67,11 +68,13 @@ export function buildPenUserProductPayloads(product: PenPublishingSource): {
     offerId: string;
     variantId: string;
     sku: string;
+    sourceVideoId?: string | null;
     color: string;
     unitsPerPack: number;
     unitPriceInCents: number;
     productCostInCents: number;
     description: string;
+    readinessErrors?: string[];
     publishable: boolean;
     financialStatus: "healthy" | "warning" | "blocked";
     fees?: {

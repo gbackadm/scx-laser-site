@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, FileSearch, Images, LoaderCircle, PackageCheck, Send, SlidersHorizontal } from "lucide-react";
+import { CheckCircle2, CircleGauge, FileSearch, Images, LoaderCircle, PackageCheck, Send, SlidersHorizontal, Video } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 
@@ -253,6 +253,7 @@ export function MercadoLivrePublishPanel({
                         <div>
                           <p className="text-xs font-black uppercase text-laser">{payload.color}</p>
                           <h4 className="mt-1 font-black">{body.family_name}</h4>
+                          <p className="mt-1 text-xs text-zinc-500">{body.family_name?.length ?? 0}/44 caracteres reservados para a familia</p>
                           <p className="mt-1 text-xs text-zinc-500">{payload.sku}</p>
                         </div>
                         <span className={`rounded px-2 py-1 text-xs font-black ${!payload.publishable ? "bg-red-400/10 text-red-200" : payload.financialStatus === "warning" ? "bg-amber-400/10 text-amber-200" : validation?.ok ? "bg-emerald-400/10 text-emerald-200" : "bg-zinc-800 text-zinc-400"}`}>
@@ -267,6 +268,25 @@ export function MercadoLivrePublishPanel({
                         <div><dt className="text-zinc-500">Unidades cobertas</dt><dd className="font-bold">{totalUnits}</dd></div>
                         <div><dt className="text-zinc-500">Plano</dt><dd className="font-bold">Classico</dd></div>
                       </dl>
+                      {payload.contentReadiness ? (
+                        <div className="mt-4 border-t border-white/10 pt-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="inline-flex items-center gap-2 text-sm font-black text-zinc-200"><CircleGauge size={16} /> Prontidao do conteudo</span>
+                            <strong className="text-lg text-white">{payload.contentReadiness.score}/100</strong>
+                          </div>
+                          <p className="mt-1 text-[11px] text-zinc-500">{payload.contentReadiness.label}</p>
+                          <div className="mt-3 grid gap-2 text-xs">
+                            {payload.contentReadiness.checks.map((check) => (
+                              <p key={check.id} className={check.passed ? "text-emerald-200" : check.blocking ? "text-red-200" : "text-amber-200"}>
+                                {check.passed ? "OK" : check.blocking ? "Bloqueia" : "Melhoria"}: {check.label}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      <p className={`mt-4 inline-flex items-center gap-2 text-xs font-bold ${payload.sourceVideoId ? "text-sky-200" : "text-amber-200"}`}>
+                        <Video size={15} /> {payload.sourceVideoId ? "Video-fonte disponivel; YouTube nao pode ser enviado e requer Clip" : "Fornecedor sem video valido para converter em Clip"}
+                      </p>
                       {payload.fees ? (
                         <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-white/10 pt-4 text-sm">
                           <div><dt className="text-zinc-500">Comissao ML</dt><dd className="font-bold text-amber-100">-{money.format(payload.fees.saleFeeInCents / 100)}</dd></div>
@@ -294,10 +314,19 @@ export function MercadoLivrePublishPanel({
                       {pictures.map((picture, index) => picture.source ? (
                         <div key={`${picture.source}-${index}`} className="w-16 shrink-0">
                           <img src={picture.source} alt={index === 0 ? `Imagem principal de ${payload.color}` : "Imagem de apoio do produto"} className="aspect-square w-full rounded border border-white/10 bg-white object-contain" />
-                          <span className="mt-1 block text-center text-[10px] text-zinc-500">{index === 0 ? "Principal" : "Apoio"}</span>
+                          <span className="mt-1 block text-center text-[10px] text-zinc-500">{index === 0 ? "Principal" : `Foto ${index + 1}`}</span>
                         </div>
                       ) : null)}
                     </div>
+                    {payload.pictureDiagnostics?.some((item) => item.status !== "approved") ? (
+                      <div className="mt-3 text-xs leading-5">
+                        {payload.pictureDiagnostics.map((item, index) => item.status !== "approved" ? (
+                          <p key={`${item.source}-${item.pictureType}`} className={item.status === "issues" ? "text-red-200" : "text-amber-200"}>
+                            Foto {index + 1}: {item.status === "unavailable" ? "diagnostico oficial indisponivel; o fluxo nao foi bloqueado." : item.issues.join(" ")}
+                          </p>
+                        ) : null)}
+                      </div>
+                    ) : null}
                     {validation?.warnings?.length ? (
                       <div className="mt-4 text-xs leading-5 text-amber-200">
                         {validation.warnings.map((warning) => <p key={warning.code}>{warning.code}: {warning.message}</p>)}

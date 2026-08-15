@@ -37,10 +37,12 @@ export type NormalizedProduct = {
   sku?: string;
   stockQuantity?: number;
   images: string[];
+  videoId?: string | null;
   offerPricesInCents: Record<string, number>;
   variants?: Array<{
     id: string;
     sku: string;
+    sourceVideoId?: string | null;
     stockQuantity: number;
     images: string[];
     attributes: Record<string, string>;

@@ -139,9 +139,9 @@ export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMerca
 
       <div className="grid min-h-[34rem] lg:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
         <div className="overflow-x-auto border-b border-white/10 lg:border-b-0 lg:border-r">
-          <table className="w-full min-w-[720px] text-left text-sm">
+          <table className="w-full min-w-[800px] text-left text-sm">
             <thead className="border-b border-white/10 text-xs uppercase text-zinc-500">
-              <tr><th className="px-3 py-3">Anuncio</th><th className="px-3 py-3">Variacao</th><th className="px-3 py-3">Preco</th><th className="px-3 py-3">Estoque</th><th className="px-3 py-3">Status</th></tr>
+              <tr><th className="px-3 py-3">Anuncio</th><th className="px-3 py-3">Variacao</th><th className="px-3 py-3">Preco</th><th className="px-3 py-3">Estoque</th><th className="px-3 py-3">Qualidade</th><th className="px-3 py-3">Status</th></tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {filtered.map((listing) => (
@@ -155,6 +155,7 @@ export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMerca
                   <td className="px-3 py-3"><p className="font-bold text-zinc-300">{listing.variation}</p><p className="mt-1 text-xs text-zinc-500">{listing.unitsPerPack ? `Kit ${listing.unitsPerPack}` : "Kit nao identificado"}</p></td>
                   <td className="px-3 py-3 font-black">{money.format(listing.price)}</td>
                   <td className="px-3 py-3 font-bold">{listing.availableQuantity}</td>
+                  <td className="px-3 py-3"><span className="font-black">{listing.qualityScore ?? "--"}</span><span className="ml-1 text-xs text-zinc-500">{listing.qualityScore === null ? "" : "/100"}</span></td>
                   <td className="px-3 py-3"><span className={`inline-flex rounded px-2 py-1 text-xs font-black ${statusStyles[listing.status] ?? "bg-zinc-800 text-zinc-300"}`}>{statusLabels[listing.status] ?? listing.status}</span></td>
                 </tr>
               ))}
@@ -175,7 +176,9 @@ export function MercadoLivreListingsPanel({ listings }: { listings: ManagedMerca
               <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Estoque</dt><dd className="font-black">{selected.availableQuantity} kits</dd></div>
               <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">SKU</dt><dd className="break-all text-right font-bold">{selected.externalSku}</dd></div>
               <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Familia</dt><dd className="text-right font-bold">{selected.familyName ?? "Nao informada"}</dd></div>
+              <div className="flex justify-between gap-4 py-3"><dt className="text-zinc-500">Qualidade oficial</dt><dd className="text-right font-black">{selected.qualityScore === null ? "Indisponivel" : `${selected.qualityScore}/100 - ${selected.qualityLevel ?? "Sem nivel"}`}</dd></div>
             </dl>
+            {selected.qualityPendingActions.length ? <div className="mt-4 border-l-2 border-amber-300/40 pl-3 text-xs leading-5 text-amber-100"><p className="font-black">Proximas melhorias do Mercado Livre</p>{selected.qualityPendingActions.slice(0, 5).map((action) => <p key={action}>{action}</p>)}</div> : null}
             {selected.subStatus.length ? <p className="mt-4 text-xs leading-5 text-amber-200">Motivo: {selected.subStatus.join(", ")}</p> : null}
             {!selected.live ? <p className="mt-4 text-xs leading-5 text-amber-200">O Mercado Livre nao respondeu agora; os dados exibidos sao a ultima copia salva.</p> : null}
             <div className="mt-5 flex flex-wrap gap-2">

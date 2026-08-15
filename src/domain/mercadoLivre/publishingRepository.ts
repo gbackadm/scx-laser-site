@@ -19,6 +19,10 @@ import {
   type PenPublishingSource,
 } from "@/domain/mercadoLivre/publishingCore.js";
 import {
+  evaluateListingContent,
+  extractYoutubeVideoId,
+} from "@/domain/mercadoLivre/listingQuality.js";
+import {
   createMercadoLivreDescription,
   createMercadoLivreItem,
   mercadoLivreRequest,
@@ -31,16 +35,30 @@ import {
   listGlobalPricingBatchTiers,
 } from "@/domain/pricing/rules";
 
+type MercadoLivrePictureDiagnostic = {
+  source: string;
+  pictureType: "thumbnail" | "other";
+  status: "approved" | "issues" | "unavailable";
+  issues: string[];
+};
+
 export type MercadoLivreDraftPayload = {
   offerId: string;
   variantId: string;
   sku: string;
+  sourceVideoId?: string | null;
   color: string;
   unitsPerPack: number;
   unitPriceInCents: number;
   productCostInCents: number;
   description: string;
   readinessErrors?: string[];
+  contentReadiness?: {
+    score: number;
+    label: string;
+    checks: Array<{ id: string; label: string; passed: boolean; blocking: boolean }>;
+  };
+  pictureDiagnostics?: MercadoLivrePictureDiagnostic[];
   publishable: boolean;
   financialStatus: "healthy" | "warning" | "blocked";
   fees?: {
@@ -122,6 +140,57 @@ function confirmedUnitPack(rawPayload: Record<string, unknown> | null | undefine
   const lengthCm = dimensions.length >= 3 ? dimensions[2] : dimensions[1] ?? rawLength;
   const weightKg = localeNumber(properties["peso-do-produto"] ?? rawPayload?.peso);
   return { heightCm, widthCm, lengthCm, weightGrams: Math.round(weightKg * 1000) };
+}
+
+function buildGenericDescription(title: string, original: string, unitsPerPack: number, variation: string) {
+  return [
+    `Kit com ${unitsPerPack} unidade(s) de ${title}, na opcao ${variation}.`,
+    "",
+    original.trim(),
+    "",
+    "CONTEUDO DA EMBALAGEM",
+    `${unitsPerPack} unidade(s) do produto na variacao selecionada.`,
+    "",
+    "INFORMACOES IMPORTANTES",
+    "- Confira a variacao escolhida antes de finalizar a compra.",
+    "- As medidas e demais caracteristicas tecnicas constam na ficha do anuncio.",
+    "- A quantidade informada corresponde ao kit completo.",
+  ].filter((line, index, lines) => line || (index > 0 && lines[index - 1])).join("\n");
+}
+
+type PictureDiagnosticResponse = {
+  diagnostics?: Array<{
+    picture_type?: string;
+    detections?: Array<{ name?: string; wordings?: Array<{ value?: string }> }>;
+  }>;
+};
+
+const pictureDiagnosticCache = new Map<string, {
+  expiresAt: number;
+  value: MercadoLivrePictureDiagnostic;
+}>();
+
+async function diagnosePicture(source: string, categoryId: string, title: string, pictureType: "thumbnail" | "other") {
+  const key = `${categoryId}:${pictureType}:${title}:${source}`;
+  const cached = pictureDiagnosticCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const response = await mercadoLivreRequest<PictureDiagnosticResponse>("/moderations/pictures/diagnostic", {
+    method: "POST",
+    body: JSON.stringify({ picture_url: source, context: { category_id: categoryId, title, picture_type: pictureType } }),
+  });
+  const diagnostic = response.body?.diagnostics?.find((item) => item.picture_type === pictureType);
+  const issues = (diagnostic?.detections ?? []).flatMap((detection) => {
+    const wording = detection.wordings?.map((item) => String(item.value ?? "").trim()).find(Boolean);
+    return wording || detection.name ? [wording ?? String(detection.name)] : [];
+  });
+  const value = {
+    source,
+    pictureType,
+    status: (!response.ok || !diagnostic) ? "unavailable" as const : issues.length ? "issues" as const : "approved" as const,
+    issues,
+  };
+  pictureDiagnosticCache.set(key, { expiresAt: Date.now() + 60 * 60 * 1000, value });
+  return value;
 }
 
 export async function listMercadoLivreCandidates() {
@@ -245,8 +314,10 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
   if (!connection) throw new Error("Conecte a conta do Mercado Livre antes de gerar a previa.");
   let generated: { familyName: string; description: string; payloads: MercadoLivreDraftPayload[] };
   let source: PenPublishingSource | Record<string, unknown>;
+  const rawPayload = (product.raw_payload ?? {}) as Record<string, unknown>;
+  const videoId = extractYoutubeVideoId(rawPayload.video);
   if (profile.adapter === "pens") {
-    const penSource: PenPublishingSource = { supplierCode: String(product.external_id ?? product.sku), images, packs, variants };
+    const penSource: PenPublishingSource = { supplierCode: String(product.external_id ?? product.sku), images, videoId, packs, variants };
     source = penSource;
     const errors = validatePenSource(penSource);
     if (errors.length) throw new Error(errors.join(" "));
@@ -267,6 +338,7 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
       sku: String(product.scx_sku),
       stockQuantity: Number(product.stock_quantity),
       images,
+      videoId,
       offerPricesInCents: {},
       variants: variants.map((variant) => ({ ...variant, offerPricesInCents: variant.offerPricesInCents })),
     };
@@ -294,7 +366,12 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
           color: payload.variationIdentity,
           unitPriceInCents: Math.round(priceInCents / payload.unitsPerPack),
           productCostInCents: variant.costInCents * payload.unitsPerPack,
-          description: `Kit com ${payload.unitsPerPack} unidade(s).\n\n${String(product.description ?? "")}`,
+          description: buildGenericDescription(
+            String(product.title),
+            String(product.description ?? ""),
+            payload.unitsPerPack,
+            payload.variationIdentity,
+          ),
           financialStatus: payload.publishable ? "healthy" as const : "blocked" as const,
           readinessErrors: [...payload.errors.map((item) => item.message), ...genericPackErrors.map((item) => item.message)],
         };
@@ -302,9 +379,57 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
     };
     source = { normalizedProduct, normalizedProfile, packs };
   }
+  const diagnosticRequests = new Map<string, { source: string; categoryId: string; title: string; pictureType: "thumbnail" | "other" }>();
+  for (const payload of generated.payloads) {
+    const body = payload.body as { category_id?: string; family_name?: string; pictures?: Array<{ source?: string }> };
+    for (const [index, picture] of (body.pictures ?? []).entries()) {
+      if (!picture.source) continue;
+      const pictureType = index === 0 ? "thumbnail" as const : "other" as const;
+      const request = { source: picture.source, categoryId: String(body.category_id ?? profile.category_id), title: String(body.family_name ?? generated.familyName), pictureType };
+      diagnosticRequests.set(`${request.categoryId}:${pictureType}:${request.source}`, request);
+    }
+  }
+  const diagnosticsByKey = new Map<string, Awaited<ReturnType<typeof diagnosePicture>>>();
+  const requests = [...diagnosticRequests.values()];
+  for (let offset = 0; offset < requests.length; offset += 4) {
+    const batch = requests.slice(offset, offset + 4);
+    const results = await Promise.all(batch.map((request) => diagnosePicture(request.source, request.categoryId, request.title, request.pictureType)));
+    results.forEach((diagnostic) => diagnosticsByKey.set(`${profile.category_id}:${diagnostic.pictureType}:${diagnostic.source}`, diagnostic));
+  }
   const costCache = new Map<string, Promise<{ saleFeeInCents: number; shippingCostInCents: number }>>();
   for (const payload of generated.payloads) {
-      const body = payload.body as { price: number; listing_type_id: string; category_id: string };
+      const body = payload.body as {
+        price: number;
+        listing_type_id: string;
+        category_id: string;
+        family_name?: string;
+        pictures?: Array<{ source?: string }>;
+        attributes?: Array<unknown>;
+      };
+      payload.pictureDiagnostics = (body.pictures ?? []).map((picture, index) => {
+        const pictureType = index === 0 ? "thumbnail" as const : "other" as const;
+        return diagnosticsByKey.get(`${body.category_id}:${pictureType}:${picture.source}`) ?? {
+          source: String(picture.source ?? ""), pictureType, status: "unavailable" as const, issues: [],
+        };
+      });
+      const mainPictureDiagnostic = payload.pictureDiagnostics[0];
+      payload.contentReadiness = evaluateListingContent({
+        familyName: body.family_name,
+        pictures: body.pictures,
+        videoId: null,
+        description: payload.description,
+        attributes: body.attributes,
+        mainPictureAccepted: mainPictureDiagnostic?.status === "unavailable" ? null : mainPictureDiagnostic?.status === "approved",
+      });
+      if (mainPictureDiagnostic?.status === "issues") {
+        payload.readinessErrors ??= [];
+        payload.readinessErrors.push(`Foto principal reprovada pelo diagnostico Mercado Livre: ${mainPictureDiagnostic.issues.join(" ")}`);
+      }
+      for (const check of payload.contentReadiness.checks.filter((item) => item.blocking && !item.passed)) {
+        const reason = `${check.label}: corrija antes de publicar.`;
+        payload.readinessErrors ??= [];
+        if (!payload.readinessErrors.includes(reason)) payload.readinessErrors.push(reason);
+      }
       const pack = payload.package;
       const dimensions = `${Math.ceil(pack.heightCm)}x${Math.ceil(pack.widthCm)}x${Math.ceil(pack.lengthCm)},${Math.ceil(pack.weightGrams)}`;
       const costKey = `${body.category_id}:${body.listing_type_id}:${body.price}:${dimensions}`;

@@ -4,6 +4,7 @@ import process from "node:process";
 import pg from "pg";
 
 import { decryptSecret } from "../src/domain/mercadoLivre/core.js";
+import { extractYoutubeVideoId } from "../src/domain/mercadoLivre/listingQuality.js";
 import {
   buildPenUserProductPayloads,
   classifyMercadoLivreValidation,
@@ -65,6 +66,7 @@ try {
   const source = {
     supplierCode: String(product.rows[0].external_id ?? product.rows[0].sku),
     images: images.rows.map((row) => String(row.url)),
+    videoId: extractYoutubeVideoId(product.rows[0].raw_payload?.video),
     packs,
     variants: normalizedVariants,
   };

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { buildMercadoLivreFamilyTitle, orderListingPictureUrls } from "./listingQuality.js";
+
 const COLOR_IDS = {
   Azul: "52028",
   Branco: "52055",
@@ -118,13 +120,20 @@ export function buildPenDescription(unitsPerPack = 200) {
     "",
     "CONTEUDO DA EMBALAGEM",
     `${unitsPerPack} canetas esferograficas.`,
+    "",
+    "PERSONALIZACAO",
+    "Gravacao a laser conforme a arte aprovada para o pedido.",
   ].join("\n");
 }
 
 export function buildPenUserProductPayloads(product) {
-  const parentImage = product.images[0];
   const payloads = product.packs.flatMap((pack) => {
-    const familyName = `Kit ${pack.unitsPerPack} Canetas Esferograficas Metalicas de Aluminio`;
+    const description = buildPenDescription(pack.unitsPerPack);
+    const familyName = buildMercadoLivreFamilyTitle({
+      title: "Canetas Metalicas Personalizadas Laser",
+      unitsPerPack: pack.unitsPerPack,
+      description,
+    });
     const commonAttributes = [
       attribute("BRAND", "Generica"),
       attribute("MODEL", product.supplierCode),
@@ -148,22 +157,25 @@ export function buildPenUserProductPayloads(product) {
     return product.variants.map((variant) => {
       const offerPriceInCents = variant.offerPricesInCents[String(pack.unitsPerPack)];
       const color = variant.attributes.Cor;
-      const firstImage = variant.images[0];
-      const pictures = [firstImage, parentImage]
-        .filter(Boolean)
-        .filter((url, index, values) => values.indexOf(url) === index)
-        .map((source) => ({ source }));
+      const pictures = orderListingPictureUrls({
+        variantImages: variant.images,
+        productImages: product.images,
+        variantAttributes: variant.attributes,
+        maxPictures: 12,
+      }).map((source) => ({ source }));
       return {
         offerId: `${variant.id}:mercado_livre:${pack.unitsPerPack}`,
         variantId: variant.id,
         sku: `${variant.scxSku}-K${pack.unitsPerPack}`,
+        sourceVideoId: product.videoId ?? null,
         color,
         unitsPerPack: pack.unitsPerPack,
         unitPriceInCents: Math.round(offerPriceInCents / pack.unitsPerPack),
         productCostInCents: variant.costInCents * pack.unitsPerPack,
         package: pack,
-        description: buildPenDescription(pack.unitsPerPack),
-        publishable: true,
+        description,
+        readinessErrors: pictures.length < 2 ? ["A oferta precisa de pelo menos duas imagens coerentes."] : [],
+        publishable: pictures.length >= 2,
         financialStatus: "healthy",
         body: {
           family_name: familyName,

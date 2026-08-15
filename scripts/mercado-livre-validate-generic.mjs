@@ -5,6 +5,7 @@ import pg from "pg";
 
 import { decryptSecret } from "../src/domain/mercadoLivre/core.js";
 import { buildGenericUserProductPayloads, deriveProfilePacks } from "../src/domain/mercadoLivre/genericPublishingCore.js";
+import { extractYoutubeVideoId } from "../src/domain/mercadoLivre/listingQuality.js";
 
 const { Pool } = pg;
 
@@ -81,7 +82,7 @@ try {
   if (!attributesResponse.ok || !categoryResponse.ok) throw new Error("Nao foi possivel consultar as regras da categoria.");
   const [categoryAttributes, category] = await Promise.all([attributesResponse.json(), categoryResponse.json()]);
   const built = buildGenericUserProductPayloads({
-    product: { id: String(product.product_id), title: String(product.title), description: String(product.description ?? ""), supplierCode: String(product.external_id), sku: String(product.product_scx_sku), stockQuantity: Number(product.stock_quantity), images: imagesResult.rows.map((row) => String(row.url)), offerPricesInCents: {}, variants },
+    product: { id: String(product.product_id), title: String(product.title), description: String(product.description ?? ""), supplierCode: String(product.external_id), sku: String(product.product_scx_sku), stockQuantity: Number(product.stock_quantity), images: imagesResult.rows.map((row) => String(row.url)), videoId: extractYoutubeVideoId(product.raw_payload?.video), offerPricesInCents: {}, variants },
     profile: { status: product.status, categoryId: product.category_id, domainId: product.domain_id, familyName: String(product.title), maxPictures: Number(category.settings?.max_pictures_per_item ?? 12), variationAxes: product.variation_axes ?? [], packQuantities: packResult.packs.map((pack) => pack.unitsPerPack), attributeMappings: product.attribute_mapping ?? [] },
     categoryAttributes,
     packages: packResult.packs,

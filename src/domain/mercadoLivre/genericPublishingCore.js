@@ -1,3 +1,5 @@
+import { buildMercadoLivreFamilyTitle, orderListingPictureUrls } from "./listingQuality.js";
+
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -68,10 +70,12 @@ function mappedValue(mapping, product, variant) {
 }
 
 function uniquePictures(variant, product, maxPictures) {
-  return [...(variant.images ?? []), ...(product.images ?? [])]
-    .filter((source, index, values) => text(source) && values.indexOf(source) === index)
-    .slice(0, maxPictures)
-    .map((source) => ({ source }));
+  return orderListingPictureUrls({
+    variantImages: variant.images,
+    productImages: product.images,
+    variantAttributes: variant.attributes,
+    maxPictures,
+  }).map((source) => ({ source }));
 }
 
 function packageAttributes(pack) {
@@ -218,7 +222,7 @@ export function buildGenericUserProductPayloads({ product, profile, categoryAttr
       );
 
       if (!skuBase) addError(offerErrors, "SKU_MISSING", "SKU ausente.");
-      if (pictures.length === 0) addError(offerErrors, "IMAGE_MISSING", `Oferta ${sku || product.id} sem imagem.`);
+      if (pictures.length < 2) addError(offerErrors, "IMAGES_INSUFFICIENT", `Oferta ${sku || product.id} precisa de pelo menos duas imagens coerentes.`);
       if (availableQuantity < 1) addError(offerErrors, "STOCK_MISSING", `Oferta ${sku || product.id} sem estoque para o kit.`);
       for (const axis of axes) {
         if (!text(variant.attributes?.[axis])) {
@@ -251,17 +255,23 @@ export function buildGenericUserProductPayloads({ product, profile, categoryAttr
 
       const variantIdentity = axes.map((axis) => text(variant.attributes?.[axis])).filter(Boolean).join("-") || "simple";
       const familyBase = text(profile?.familyName) || text(product.title) || text(product.supplierCode) || product.id;
+      const familyName = buildMercadoLivreFamilyTitle({
+        title: familyBase,
+        unitsPerPack: pack.unitsPerPack,
+        description: product.description,
+      });
       payloads.push({
         offerId: `${variant.id ?? product.id}:mercado_livre:${pack.unitsPerPack}`,
         variantId: variant.id ?? product.id,
         unitsPerPack: pack.unitsPerPack,
         sku,
+        sourceVideoId: product.videoId ?? null,
         variationIdentity: variantIdentity,
         package: pack,
         errors: offerErrors,
         publishable: !fatalProfileError && offerErrors.length === 0,
         body: {
-          family_name: `${familyBase} - Kit ${pack.unitsPerPack}`,
+          family_name: familyName,
           category_id: profile?.categoryId,
           domain_id: profile?.domainId,
           price: priceInCents / 100,

@@ -20,7 +20,7 @@ function simpleInput() {
       supplierCode: "MP01",
       sku: "SCX-MOU-0001",
       stockQuantity: 20,
-      images: ["https://example.com/mouse.jpg"],
+      images: ["https://example.com/mouse.jpg", "https://example.com/mouse-verso.jpg"],
       offerPricesInCents: { "1": 4990 },
     },
     profile: {
@@ -45,7 +45,7 @@ test("monta produto simples sem inventar variacao", () => {
   assert.equal(result.publishable, true);
   assert.equal(result.payloads.length, 1);
   assert.equal(result.payloads[0].variationIdentity, "simple");
-  assert.equal(result.payloads[0].body.family_name, "Mouse pad de plastico - Kit 1");
+  assert.equal(result.payloads[0].body.family_name, "Kit 1 Mouse pad de plastico");
   assert.ok(!("variations" in result.payloads[0].body));
   assert.ok(result.payloads[0].body.attributes.some((item) => item.id === "MATERIALS" && item.value_name === "Plastico"));
   assert.ok(result.payloads[0].body.attributes.some((item) => item.id === "SELLER_SKU"));
@@ -178,7 +178,7 @@ test("prioriza imagens da variacao e respeita o limite da categoria", () => {
     sku: "SCX-MOU-0001-AZ",
     stockQuantity: 10,
     images: ["https://example.com/azul.jpg", "https://example.com/pai-1.jpg"],
-    attributes: {},
+    attributes: { Cor: "Azul" },
     offerPricesInCents: { "1": 4990 },
   }];
   const result = buildGenericUserProductPayloads(input);
