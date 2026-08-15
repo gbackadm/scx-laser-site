@@ -1,12 +1,17 @@
 import { ArrowRight, CheckCircle2, CircleAlert, KeyRound, Radio } from "lucide-react";
 import Link from "next/link";
 
+import { MercadoLivrePublishPanel } from "@/components/admin/MercadoLivrePublishPanel";
 import { requireAdminSession } from "@/domain/auth/session";
 import { roleCan } from "@/domain/catalog/permissions";
 import {
   countPendingMercadoLivreNotifications,
   getMercadoLivreConnection,
 } from "@/domain/mercadoLivre/repository";
+import {
+  getMercadoLivreDraft,
+  listMercadoLivreCandidates,
+} from "@/domain/mercadoLivre/publishingRepository";
 
 export const metadata = { title: "Admin SCX Laser | Mercado Livre" };
 export const dynamic = "force-dynamic";
@@ -34,11 +39,12 @@ const errorMessages: Record<string, string> = {
 };
 
 export default async function MercadoLivrePage({ searchParams }: PageProps) {
-  const [session, params, connection, pending] = await Promise.all([
+  const [session, params, connection, pending, candidates] = await Promise.all([
     requireAdminSession(),
     searchParams,
     getMercadoLivreConnection(),
     countPendingMercadoLivreNotifications(),
+    listMercadoLivreCandidates(),
   ]);
   const canConnect = roleCan(session.role, "supplier:import");
   const configured = Boolean(
@@ -48,6 +54,8 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
     process.env.MERCADO_LIVRE_TOKEN_ENCRYPTION_KEY,
   );
   const expired = connection?.expiresAt ? new Date(connection.expiresAt) <= new Date() : false;
+  const pilot = candidates.find((candidate) => candidate.scxSku === "SCX-CAN-0021") ?? candidates[0];
+  const initialDraft = pilot ? await getMercadoLivreDraft(pilot.id) : null;
 
   return (
     <main className="min-h-screen bg-[#050606] px-4 py-6 text-white sm:px-8 lg:px-10 lg:py-8">
@@ -142,6 +150,9 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
             </div>
           </dl>
         </section>
+        {connection && roleCan(session.role, "catalog:publish") ? (
+          <MercadoLivrePublishPanel candidates={candidates} initialDraft={initialDraft} />
+        ) : null}
       </div>
     </main>
   );
