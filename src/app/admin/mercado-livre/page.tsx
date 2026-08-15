@@ -1,7 +1,8 @@
-import { ArrowRight, CheckCircle2, CircleAlert, KeyRound, Radio } from "lucide-react";
+import { ArrowRight, CheckCircle2, CircleAlert, KeyRound, ListChecks, PackagePlus, Radio } from "lucide-react";
 import Link from "next/link";
 
 import { MercadoLivrePublishPanel } from "@/components/admin/MercadoLivrePublishPanel";
+import { MercadoLivreListingsPanel } from "@/components/admin/MercadoLivreListingsPanel";
 import { requireAdminSession } from "@/domain/auth/session";
 import { roleCan } from "@/domain/catalog/permissions";
 import {
@@ -12,13 +13,14 @@ import {
   getMercadoLivreDraft,
   listMercadoLivreCandidates,
 } from "@/domain/mercadoLivre/publishingRepository";
+import { listManagedMercadoLivreListings } from "@/domain/mercadoLivre/listingsRepository";
 import { getGlobalPricingRule } from "@/domain/pricing/rules";
 
 export const metadata = { title: "Admin SCX Laser | Mercado Livre" };
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  searchParams?: Promise<{ conectado?: string; erro?: string; testada?: string }>;
+  searchParams?: Promise<{ conectado?: string; erro?: string; testada?: string; aba?: string }>;
 };
 
 function formatDate(value: string | null) {
@@ -56,12 +58,17 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
     process.env.MERCADO_LIVRE_TOKEN_ENCRYPTION_KEY,
   );
   const expired = connection?.expiresAt ? new Date(connection.expiresAt) <= new Date() : false;
+  const activeTab = params?.aba === "anuncios" ? "anuncios" : "publicar";
   const pilot = candidates.find((candidate) => candidate.scxSku === "SCX-CAN-0021") ?? candidates[0];
-  const initialDraft = pilot ? await getMercadoLivreDraft(pilot.id) : null;
+  const canPublish = Boolean(connection && roleCan(session.role, "catalog:publish"));
+  const [initialDraft, listings] = await Promise.all([
+    activeTab === "publicar" && pilot ? getMercadoLivreDraft(pilot.id) : null,
+    activeTab === "anuncios" && canPublish ? listManagedMercadoLivreListings() : [],
+  ]);
 
   return (
     <main className="min-h-screen bg-[#050606] px-4 py-6 text-white sm:px-8 lg:px-10 lg:py-8">
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-7xl">
         <div className="flex flex-col gap-4 border-b border-white/10 pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-black uppercase text-laser">Marketplace direto</p>
@@ -152,14 +159,22 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
             </div>
           </dl>
         </section>
-        {connection && roleCan(session.role, "catalog:publish") ? (
-          <MercadoLivrePublishPanel candidates={candidates} initialDraft={initialDraft} commercialRules={{
-            minProfitInCents: pricingRule.marketplaceMinProfitAmountInCents,
-            minReturnPercentage: pricingRule.marketplaceMinReturnPercentage,
-            maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
-            operationalCostInCents: pricingRule.marketplaceOperationalCostAmountInCents,
-            taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
-          }} />
+        {canPublish ? (
+          <>
+            <nav className="mb-7 flex gap-1 border-b border-white/10" aria-label="Mercado Livre">
+              <Link href="/admin/mercado-livre" className={`inline-flex min-h-11 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "publicar" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><PackagePlus size={17} /> Preparar publicacao</Link>
+              <Link href="/admin/mercado-livre?aba=anuncios" className={`inline-flex min-h-11 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "anuncios" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><ListChecks size={17} /> Anuncios publicados</Link>
+            </nav>
+            {activeTab === "publicar" ? (
+              <MercadoLivrePublishPanel candidates={candidates} initialDraft={initialDraft} commercialRules={{
+                minProfitInCents: pricingRule.marketplaceMinProfitAmountInCents,
+                minReturnPercentage: pricingRule.marketplaceMinReturnPercentage,
+                maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
+                operationalCostInCents: pricingRule.marketplaceOperationalCostAmountInCents,
+                taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
+              }} />
+            ) : <MercadoLivreListingsPanel listings={listings} />}
+          </>
         ) : null}
       </div>
     </main>
