@@ -3,16 +3,20 @@
 import { Trash2 } from "lucide-react";
 import { useState, useTransition } from "react";
 
+import { AdminNotice } from "@/components/admin/AdminNotice";
+
 type CatalogDeleteButtonProps = {
   productId: string;
   productName: string;
   onDeleted: (productId: string) => void;
+  compact?: boolean;
 };
 
 export function CatalogDeleteButton({
   productId,
   productName,
   onDeleted,
+  compact = false,
 }: CatalogDeleteButtonProps) {
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
@@ -61,17 +65,13 @@ export function CatalogDeleteButton({
             }
           });
         }}
-        className="inline-flex h-9 items-center justify-center gap-2 rounded border border-red-300/25 px-3 text-xs font-bold text-red-100 transition hover:border-red-200 hover:bg-red-400/10 disabled:text-zinc-600"
+        className={`inline-flex h-9 items-center justify-center gap-2 rounded border border-red-300/25 text-xs font-bold text-red-100 transition hover:border-red-200 hover:bg-red-400/10 disabled:text-zinc-600 ${compact ? "w-9 px-0" : "px-3"}`}
         title="Excluir produto"
       >
         <Trash2 size={14} />
-        {isPending ? "Excluindo..." : "Excluir"}
+        <span className={compact ? "sr-only" : undefined}>{isPending ? "Excluindo..." : "Excluir"}</span>
       </button>
-      {message ? (
-        <span className="text-right text-[0.68rem] font-bold text-red-100">
-          {message}
-        </span>
-      ) : null}
+      <AdminNotice message={message} />
     </div>
   );
 }

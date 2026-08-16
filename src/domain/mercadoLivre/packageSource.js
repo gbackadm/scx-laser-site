@@ -12,9 +12,18 @@ function dimensionsFrom(value) {
 
 export function confirmedMasterPack(rawPayload) {
   const properties = rawPayload?.propriedades ?? {};
-  const dimensions = dimensionsFrom(properties["dimensao-caixa"] ?? properties["dimensao-da-caixa"]);
+  const dimensions = dimensionsFrom(
+    properties["dimensao-caixa"]
+      ?? properties["dimensao-da-caixa"]
+      ?? properties["dimensao-por-caixa"],
+  );
   return {
-    masterUnits: Math.round(localeNumber(properties["quant-por-caixa"] ?? properties["quantidade-por-caixa"])),
+    masterUnits: Math.round(localeNumber(
+      properties["quant-por-caixa"]
+        ?? properties["quantidade-por-caixa"]
+        ?? properties["quant-da-caixa"]
+        ?? properties["quantidade-da-caixa"],
+    )),
     innerUnits: Math.round(localeNumber(properties["quant-por-caixinha"] ?? properties["quantidade-por-caixinha"])),
     lengthCm: dimensions[0] ?? 0,
     widthCm: dimensions[1] ?? 0,

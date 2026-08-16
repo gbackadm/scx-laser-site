@@ -141,13 +141,7 @@ export default async function AdminPricingPage({
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-5 px-4 py-5 sm:px-8 sm:py-6 lg:px-12">
-        <AdminNotice />
-
-        {message ? (
-          <div className="rounded border border-white/10 bg-[#0d0f10] px-4 py-3 text-sm font-bold text-zinc-100">
-            {message}
-          </div>
-        ) : null}
+        <AdminNotice message={message} />
 
         <section className="rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
@@ -244,6 +238,14 @@ export default async function AdminPricingPage({
                   <label className="grid gap-2 text-sm font-bold text-zinc-200 sm:col-span-2">
                     Reserva para impostos e outros custos (%)
                     <input name="marketplaceTaxReservePercentage" type="number" min={0} step="0.1" defaultValue={pricingRule.marketplaceTaxReservePercentage} disabled={!canEditPricing} className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500" />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold text-zinc-200 sm:col-span-2">
+                    Pausar anuncio com estoque igual ou menor que (kits)
+                    <input name="marketplaceStockPauseThreshold" type="number" min={0} step={1} defaultValue={pricingRule.marketplaceStockPauseThreshold} disabled={!canEditPricing} className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500" />
+                  </label>
+                  <label className="grid gap-2 text-sm font-bold text-zinc-200 sm:col-span-2">
+                    Sinalizar estoque baixo abaixo de (kits)
+                    <input name="marketplaceLowStockWarningThreshold" type="number" min={0} step={1} defaultValue={pricingRule.marketplaceLowStockWarningThreshold} disabled={!canEditPricing} className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser disabled:text-zinc-500" />
                   </label>
                 </div>
               </div>

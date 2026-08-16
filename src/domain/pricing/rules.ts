@@ -21,6 +21,8 @@ export type PricingRule = {
   marketplaceMaxProductCostAmountInCents: number;
   marketplaceOperationalCostAmountInCents: number;
   marketplaceTaxReservePercentage: number;
+  marketplaceStockPauseThreshold: number;
+  marketplaceLowStockWarningThreshold: number;
   roundingMode: PricingRoundingMode;
 };
 
@@ -61,6 +63,8 @@ type PricingRuleRow = {
   marketplace_max_product_cost_amount_in_cents: number;
   marketplace_operational_cost_amount_in_cents: number;
   marketplace_tax_reserve_percentage: string | number;
+  marketplace_stock_pause_threshold: number;
+  marketplace_low_stock_warning_threshold: number;
   rounding_mode: PricingRoundingMode;
 };
 
@@ -82,6 +86,8 @@ export type PricingRuleInput = {
   marketplaceMaxProductCostAmountInCents: number;
   marketplaceOperationalCostAmountInCents: number;
   marketplaceTaxReservePercentage: number;
+  marketplaceStockPauseThreshold: number;
+  marketplaceLowStockWarningThreshold: number;
   roundingMode: PricingRoundingMode;
   tiers: PricingBatchTierInput[];
 };
@@ -105,6 +111,8 @@ export const defaultPricingRule: PricingRule = {
   marketplaceMaxProductCostAmountInCents: 500000,
   marketplaceOperationalCostAmountInCents: 0,
   marketplaceTaxReservePercentage: 0,
+  marketplaceStockPauseThreshold: 2,
+  marketplaceLowStockWarningThreshold: 50,
   roundingMode: "ending_90",
 };
 
@@ -185,6 +193,8 @@ function mapPricingRule(row: PricingRuleRow): PricingRule {
     marketplaceMaxProductCostAmountInCents: row.marketplace_max_product_cost_amount_in_cents ?? 500000,
     marketplaceOperationalCostAmountInCents: row.marketplace_operational_cost_amount_in_cents ?? 0,
     marketplaceTaxReservePercentage: Number(row.marketplace_tax_reserve_percentage ?? 0),
+    marketplaceStockPauseThreshold: row.marketplace_stock_pause_threshold ?? 2,
+    marketplaceLowStockWarningThreshold: row.marketplace_low_stock_warning_threshold ?? 50,
     roundingMode: row.rounding_mode,
   };
 }
@@ -362,10 +372,12 @@ export async function updateGlobalPricingRule(input: PricingRuleInput) {
           marketplace_max_product_cost_amount_in_cents,
           marketplace_operational_cost_amount_in_cents,
           marketplace_tax_reserve_percentage,
+          marketplace_stock_pause_threshold,
+          marketplace_low_stock_warning_threshold,
           rounding_mode,
           updated_at
         )
-        VALUES ($1, 'Regra global padrao', 'global', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
+        VALUES ($1, 'Regra global padrao', 'global', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
         ON CONFLICT (id) DO UPDATE SET
           cost_multiplier = EXCLUDED.cost_multiplier,
           fixed_fee_amount_in_cents = EXCLUDED.fixed_fee_amount_in_cents,
@@ -377,6 +389,8 @@ export async function updateGlobalPricingRule(input: PricingRuleInput) {
           marketplace_max_product_cost_amount_in_cents = EXCLUDED.marketplace_max_product_cost_amount_in_cents,
           marketplace_operational_cost_amount_in_cents = EXCLUDED.marketplace_operational_cost_amount_in_cents,
           marketplace_tax_reserve_percentage = EXCLUDED.marketplace_tax_reserve_percentage,
+          marketplace_stock_pause_threshold = EXCLUDED.marketplace_stock_pause_threshold,
+          marketplace_low_stock_warning_threshold = EXCLUDED.marketplace_low_stock_warning_threshold,
           rounding_mode = EXCLUDED.rounding_mode,
           is_active = true,
           updated_at = now()
@@ -393,6 +407,8 @@ export async function updateGlobalPricingRule(input: PricingRuleInput) {
         input.marketplaceMaxProductCostAmountInCents,
         input.marketplaceOperationalCostAmountInCents,
         input.marketplaceTaxReservePercentage,
+        input.marketplaceStockPauseThreshold,
+        input.marketplaceLowStockWarningThreshold,
         input.roundingMode,
       ],
     );

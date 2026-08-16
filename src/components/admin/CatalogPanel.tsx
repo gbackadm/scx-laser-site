@@ -1,13 +1,12 @@
 "use client";
 
-import { Edit3, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { Edit3, FilterX, Plus, Search, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { CatalogDeleteButton } from "@/components/admin/CatalogDeleteButton";
 import { CatalogEditModal } from "@/components/admin/CatalogEditModal";
 import { CatalogSyncButton } from "@/components/admin/CatalogSyncButton";
 import { CatalogStatusSelect } from "@/components/admin/CatalogStatusSelect";
-import { OlistProductSyncButton } from "@/components/admin/OlistProductSyncButton";
 import type {
   AdminProductBatchPrice,
   AdminProduct,
@@ -25,6 +24,16 @@ const statuses: Array<AdminProductStatus | "Todos"> = [
 ];
 
 const pageSizes = ["10", "25", "50", "100", "Todos"] as const;
+
+type ChannelFilter =
+  | "Todos"
+  | "Mercado Livre"
+  | "ML ativos"
+  | "ML com avisos"
+  | "Fora do ML"
+  | "Shopee";
+type StockFilter = "Todos" | "Disponivel" | "Baixo" | "Zerado";
+type ImageFilter = "Todas" | "Com imagens" | "Sem imagens";
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -114,6 +123,48 @@ function ProductThumbnail({
   );
 }
 
+type ChannelTone = "ok" | "warning" | "error" | "idle";
+
+const channelToneClasses: Record<ChannelTone, string> = {
+  ok: "border-emerald-400/35 bg-emerald-400/10 text-emerald-300",
+  warning: "border-amber-300/35 bg-amber-300/10 text-amber-200",
+  error: "border-red-400/35 bg-red-400/10 text-red-300",
+  idle: "border-white/10 bg-white/[0.02] text-zinc-600",
+};
+
+function ChannelIndicator({ abbreviation, label, title, tone, href }: {
+  abbreviation: string;
+  label: string;
+  title: string;
+  tone: ChannelTone;
+  href?: string;
+}) {
+  const content = <><span aria-hidden="true">{abbreviation}</span><span className="sr-only">{label}</span></>;
+  const className = `inline-flex h-8 min-w-8 items-center justify-center rounded border px-1.5 text-[0.65rem] font-black transition ${channelToneClasses[tone]}`;
+  return href ? (
+    <a href={href} className={className} title={title} aria-label={title}>{content}</a>
+  ) : (
+    <span className={className} title={title} aria-label={title}>{content}</span>
+  );
+}
+
+function ProductChannelStatus({ product }: { product: AdminProduct }) {
+  const ml = product.mercadoLivre;
+  const mlTone: ChannelTone = !ml ? "idle" : ml.failedCount ? "error"
+    : ml.pausedCount || ml.lowStockCount || ml.activeCount < ml.listingCount ? "warning" : "ok";
+  const mlTitle = !ml ? "Mercado Livre: produto nao anunciado"
+    : `Mercado Livre: ${ml.activeCount} ativo(s), ${ml.pausedCount} pausado(s)${ml.lowStockCount ? `, ${ml.lowStockCount} com estoque baixo` : ""}${ml.failedCount ? `, ${ml.failedCount} com falha` : ""}`;
+  const shopee = product.channelMappings?.find((item) => item.channel === "shopee");
+  const shopeeTone: ChannelTone = shopee?.syncStatus === "synced" ? "ok"
+    : shopee?.syncStatus === "failed" ? "error" : "warning";
+  return (
+    <div className="flex items-center gap-2" aria-label="Status dos canais">
+      <ChannelIndicator abbreviation="ML" label="Mercado Livre" title={`${mlTitle}. Clique para preparar este produto.`} tone={mlTone} href={`/admin/mercado-livre?productId=${encodeURIComponent(product.catalogId)}`} />
+      {shopee ? <ChannelIndicator abbreviation="SHP" label="Shopee" title={`Shopee: ${shopee.syncStatus}`} tone={shopeeTone} /> : null}
+    </div>
+  );
+}
+
 type CatalogPanelProps = {
   categories: string[];
   products: AdminProduct[];
@@ -137,6 +188,10 @@ export function CatalogPanel({
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("Todas");
   const [status, setStatus] = useState<(typeof statuses)[number]>("Todos");
+  const [channel, setChannel] = useState<ChannelFilter>("Todos");
+  const [stock, setStock] = useState<StockFilter>("Todos");
+  const [supplier, setSupplier] = useState("Todos");
+  const [images, setImages] = useState<ImageFilter>("Todas");
   const [pageSize, setPageSize] = useState<(typeof pageSizes)[number]>("25");
   const [currentPage, setCurrentPage] = useState(1);
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
@@ -144,6 +199,23 @@ export function CatalogPanel({
   const [openPriceProductId, setOpenPriceProductId] = useState<string | null>(null);
   const [deletedProductIds, setDeletedProductIds] = useState<Set<string>>(
     () => new Set(),
+  );
+
+  const suppliers = useMemo(
+    () =>
+      Array.from(new Set(catalogProducts.map((product) => product.supplier)))
+        .filter(Boolean)
+        .sort((first, second) =>
+          first.localeCompare(second, "pt-BR", { sensitivity: "base" }),
+        ),
+    [catalogProducts],
+  );
+  const hasShopeeProducts = useMemo(
+    () =>
+      catalogProducts.some((product) =>
+        product.channelMappings?.some((mapping) => mapping.channel === "shopee"),
+      ),
+    [catalogProducts],
   );
 
   function toggleSort(nextSortKey: SortKey) {
@@ -172,8 +244,30 @@ export function CatalogPanel({
       ]);
       const matchesCategory = category === "Todas" || product.category === category;
       const matchesStatus = status === "Todos" || product.status === status;
+      const matchesSupplier = supplier === "Todos" || product.supplier === supplier;
+      const matchesImages = images === "Todas" ||
+        (images === "Com imagens" ? product.imageUrls.length > 0 : product.imageUrls.length === 0);
+      const matchesStock = stock === "Todos" ||
+        (stock === "Disponivel" && product.stock >= 1000) ||
+        (stock === "Baixo" && product.stock > 0 && product.stock < 1000) ||
+        (stock === "Zerado" && product.stock <= 0);
+      const ml = product.mercadoLivre;
+      const mlHasAttention = Boolean(
+        ml &&
+          (ml.failedCount > 0 ||
+            ml.pausedCount > 0 ||
+            ml.lowStockCount > 0 ||
+            ml.activeCount < ml.listingCount),
+      );
+      const matchesChannel = channel === "Todos" ||
+        (channel === "Mercado Livre" && Boolean(ml)) ||
+        (channel === "ML ativos" && Boolean(ml?.activeCount)) ||
+        (channel === "ML com avisos" && mlHasAttention) ||
+        (channel === "Fora do ML" && !ml) ||
+        (channel === "Shopee" && product.channelMappings?.some((mapping) => mapping.channel === "shopee"));
 
-      return matchesSearch && matchesCategory && matchesStatus;
+      return matchesSearch && matchesCategory && matchesStatus && matchesSupplier &&
+        matchesImages && matchesStock && matchesChannel;
     });
 
     if (!sortKey) {
@@ -217,7 +311,23 @@ export function CatalogPanel({
         directionMultiplier
       );
     });
-  }, [catalogProducts, category, deletedProductIds, search, sortDirection, sortKey, status]);
+  }, [catalogProducts, category, channel, deletedProductIds, images, search, sortDirection, sortKey, status, stock, supplier]);
+
+  const hasActiveFilters = Boolean(
+    search || category !== "Todas" || status !== "Todos" || channel !== "Todos" ||
+      stock !== "Todos" || supplier !== "Todos" || images !== "Todas",
+  );
+
+  function clearFilters() {
+    setSearch("");
+    setCategory("Todas");
+    setStatus("Todos");
+    setChannel("Todos");
+    setStock("Todos");
+    setSupplier("Todos");
+    setImages("Todas");
+    setCurrentPage(1);
+  }
 
   const visibleProducts = useMemo(() => {
     if (pageSize === "Todos") {
@@ -318,8 +428,8 @@ export function CatalogPanel({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_220px_190px_170px]">
-          <label className="relative block">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <label className="relative block sm:col-span-2">
             <span className="sr-only">Buscar produtos</span>
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
             <input
@@ -372,6 +482,75 @@ export function CatalogPanel({
           </label>
 
           <label className="block">
+            <span className="sr-only">Filtrar por marketplace</span>
+            <select
+              value={channel}
+              onChange={(event) => {
+                setChannel(event.target.value as ChannelFilter);
+                setCurrentPage(1);
+              }}
+              className="h-11 w-full rounded border border-white/12 bg-black/40 px-3 text-sm text-white outline-none transition focus:border-laser"
+            >
+              <option value="Todos">Canal: todos</option>
+              <option value="Mercado Livre">Canal: no Mercado Livre</option>
+              <option value="ML ativos">Canal: ML ativos</option>
+              <option value="ML com avisos">Canal: ML com avisos</option>
+              <option value="Fora do ML">Canal: fora do ML</option>
+              {hasShopeeProducts ? <option value="Shopee">Canal: Shopee</option> : null}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="sr-only">Filtrar por estoque</span>
+            <select
+              value={stock}
+              onChange={(event) => {
+                setStock(event.target.value as StockFilter);
+                setCurrentPage(1);
+              }}
+              className="h-11 w-full rounded border border-white/12 bg-black/40 px-3 text-sm text-white outline-none transition focus:border-laser"
+            >
+              <option value="Todos">Estoque: todos</option>
+              <option value="Disponivel">Estoque: disponivel (1.000+)</option>
+              <option value="Baixo">Estoque: baixo (1-999)</option>
+              <option value="Zerado">Estoque: zerado</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="sr-only">Filtrar por fornecedor</span>
+            <select
+              value={supplier}
+              onChange={(event) => {
+                setSupplier(event.target.value);
+                setCurrentPage(1);
+              }}
+              className="h-11 w-full rounded border border-white/12 bg-black/40 px-3 text-sm text-white outline-none transition focus:border-laser"
+            >
+              <option value="Todos">Origem: todas</option>
+              {suppliers.map((item) => (
+                <option key={item} value={item}>Origem: {item}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="sr-only">Filtrar por imagens</span>
+            <select
+              value={images}
+              onChange={(event) => {
+                setImages(event.target.value as ImageFilter);
+                setCurrentPage(1);
+              }}
+              className="h-11 w-full rounded border border-white/12 bg-black/40 px-3 text-sm text-white outline-none transition focus:border-laser"
+            >
+              <option value="Todas">Imagens: todas</option>
+              <option value="Com imagens">Imagens: presentes</option>
+              <option value="Sem imagens">Imagens: ausentes</option>
+            </select>
+          </label>
+
+          <label className="block">
             <span className="sr-only">Quantidade exibida</span>
             <select
               value={pageSize}
@@ -388,6 +567,16 @@ export function CatalogPanel({
               ))}
             </select>
           </label>
+
+          <button
+            type="button"
+            onClick={clearFilters}
+            disabled={!hasActiveFilters}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded border border-white/12 px-3 text-sm font-bold text-zinc-300 transition hover:border-laser hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <FilterX size={16} />
+            Limpar filtros
+          </button>
         </div>
       </div>
 
@@ -449,10 +638,20 @@ export function CatalogPanel({
                 </div>
                 <div>
                   <dt className="text-[0.68rem] font-black uppercase tracking-[0.12em] text-zinc-500">
-                    Base
+                    Preco base
                   </dt>
                   <dd className="mt-1 font-bold text-zinc-100">
                     {currencyFormatter.format(product.priceInCents / 100)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[0.68rem] font-black uppercase tracking-[0.12em] text-zinc-500">
+                    Custo unitario
+                  </dt>
+                  <dd className="mt-1 font-bold text-zinc-100">
+                    {product.costInCents === undefined
+                      ? "Nao informado"
+                      : currencyFormatter.format(product.costInCents / 100)}
                   </dd>
                 </div>
               </dl>
@@ -524,6 +723,7 @@ export function CatalogPanel({
                   }}
                 />
               </div>
+              <div className="mt-3 border-t border-white/10 pt-3"><ProductChannelStatus product={product} /></div>
 
               <div className="mt-4 grid gap-2 sm:grid-cols-4">
                 <button
@@ -557,9 +757,6 @@ export function CatalogPanel({
                   />
                 ) : null}
                 {canEdit ? (
-                  <OlistProductSyncButton productId={product.catalogId} />
-                ) : null}
-                {canEdit ? (
                   <CatalogDeleteButton
                     productId={product.catalogId}
                     productName={product.name}
@@ -579,16 +776,16 @@ export function CatalogPanel({
       </div>
 
       <div className="hidden overflow-x-auto xl:block">
-        <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[900px] border-collapse text-left text-sm">
           <thead className="border-b border-white/10 bg-white/[0.025] text-xs uppercase tracking-[0.12em] text-zinc-400">
             <tr>
-              <th className="px-5 py-4 font-black"><SortHeader label="Produto" value="product" /></th>
-              <th className="px-5 py-4 font-black"><SortHeader label="Categoria" value="category" /></th>
-              <th className="px-5 py-4 font-black"><SortHeader label="Fornecedor" value="supplier" /></th>
-              <th className="px-5 py-4 font-black"><SortHeader label="Preco" value="price" /></th>
-              <th className="px-5 py-4 font-black"><SortHeader label="Estoque" value="stock" /></th>
-              <th className="px-5 py-4 font-black"><SortHeader label="Status" value="status" /></th>
-              <th className="px-5 py-4 text-right font-black">Acoes</th>
+              <th className="px-3 py-4 font-black"><SortHeader label="Produto" value="product" /></th>
+              <th className="px-3 py-4 font-black"><SortHeader label="Categoria" value="category" /></th>
+              <th className="px-3 py-4 font-black"><SortHeader label="Fornecedor" value="supplier" /></th>
+              <th className="px-3 py-4 font-black"><SortHeader label="Custo / preco" value="price" /></th>
+              <th className="px-3 py-4 font-black"><SortHeader label="Estoque" value="stock" /></th>
+              <th className="px-3 py-4 font-black"><SortHeader label="Status" value="status" /></th>
+              <th className="px-3 py-4 text-right font-black">Acoes</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/8">
@@ -608,7 +805,7 @@ export function CatalogPanel({
                 id={anchor}
                 className="scroll-mt-28 transition hover:bg-white/[0.025]"
               >
-                <td className="px-5 py-4">
+                <td className="px-3 py-4">
                   <div className="flex items-center gap-3">
                     <ProductThumbnail
                       imageUrl={product.primaryImageUrl}
@@ -625,12 +822,17 @@ export function CatalogPanel({
                     </div>
                   </div>
                 </td>
-                <td className="px-5 py-4 text-zinc-300">{product.category}</td>
-                <td className="px-5 py-4 text-zinc-300">{product.supplier}</td>
-                <td className="px-5 py-4">
+                <td className="px-3 py-4 text-zinc-300">{product.category}</td>
+                <td className="px-3 py-4 text-zinc-300">{product.supplier}</td>
+                <td className="px-3 py-4">
                   <div className="grid gap-1">
                     <div className="font-semibold text-zinc-100">
-                      Base: {currencyFormatter.format(product.priceInCents / 100)}
+                      Custo un.: {product.costInCents === undefined
+                        ? "Nao informado"
+                        : currencyFormatter.format(product.costInCents / 100)}
+                    </div>
+                    <div className="text-[0.72rem] font-semibold text-zinc-500">
+                      Preco base: {currencyFormatter.format(product.priceInCents / 100)}
                     </div>
                     {product.batchPrices.length > 0 ? (
                       <>
@@ -679,8 +881,8 @@ export function CatalogPanel({
                     ) : null}
                   </div>
                 </td>
-                <td className="px-5 py-4 text-zinc-300">{product.stock}</td>
-                <td className="px-5 py-4">
+                <td className="px-3 py-4 text-zinc-300">{product.stock}</td>
+                <td className="px-3 py-4">
                   <CatalogStatusSelect
                     canEdit={canEdit}
                     productId={product.catalogId}
@@ -700,20 +902,22 @@ export function CatalogPanel({
                       );
                     }}
                   />
+                  <div className="mt-3"><ProductChannelStatus product={product} /></div>
                 </td>
-                <td className="px-5 py-4">
+                <td className="px-3 py-4">
                   <div className="flex justify-end gap-2">
                     <button
                       type="button"
                       onClick={() => setEditingProduct(product)}
-                      className="inline-flex h-9 items-center gap-2 rounded border border-white/12 px-3 text-xs font-bold text-zinc-300 transition hover:border-laser hover:text-white"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded border border-white/12 text-zinc-300 transition hover:border-laser hover:text-white"
                       title={canEdit ? "Editar produto" : "Visualizar produto"}
                     >
                       <Edit3 size={14} />
-                      {canEdit ? "Editar" : "Ver"}
+                      <span className="sr-only">{canEdit ? "Editar" : "Ver"}</span>
                     </button>
                     {canEdit ? (
                       <CatalogSyncButton
+                        compact
                         disabled={!canSync || !product.supplierProductId}
                         productId={product.catalogId}
                         onSynced={(result) => {
@@ -736,10 +940,8 @@ export function CatalogPanel({
                       />
                     ) : null}
                     {canEdit ? (
-                      <OlistProductSyncButton productId={product.catalogId} />
-                    ) : null}
-                    {canEdit ? (
                       <CatalogDeleteButton
+                        compact
                         productId={product.catalogId}
                         productName={product.name}
                         onDeleted={(productId) => {

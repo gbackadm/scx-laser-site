@@ -283,6 +283,27 @@ export async function listCatalogCategoriesForAdmin() {
   return result.rows.map(mapCategory);
 }
 
+export type CatalogChannelMappingSummary = {
+  productId: string;
+  channel: string;
+  externalId: string;
+  syncStatus: "synced" | "pending" | "failed" | "disabled";
+};
+
+export async function listCatalogChannelMappings(): Promise<CatalogChannelMappingSummary[]> {
+  const result = await getDatabasePool().query(
+    `SELECT product_id, channel, external_id, sync_status
+       FROM scx_catalog_product_channel_mappings
+      WHERE channel IN ('olist', 'shopee')`,
+  );
+  return result.rows.map((row) => ({
+    productId: String(row.product_id),
+    channel: String(row.channel),
+    externalId: String(row.external_id),
+    syncStatus: row.sync_status as CatalogChannelMappingSummary["syncStatus"],
+  }));
+}
+
 export async function ensureCatalogCategory(categoryName: string) {
   const name = categoryName.trim() || "Sem categoria";
   const slug = slugify(name) || "sem-categoria";

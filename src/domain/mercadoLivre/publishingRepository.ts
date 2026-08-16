@@ -6,6 +6,7 @@ import { getDatabasePool } from "@/domain/catalog/db";
 import {
   buildGenericUserProductPayloads,
   deriveProfilePacks,
+  inferMaterial,
   type AttributeMapping,
   type PublishingProfile,
 } from "@/domain/mercadoLivre/genericPublishingCore.js";
@@ -23,6 +24,12 @@ import {
   extractYoutubeVideoId,
 } from "@/domain/mercadoLivre/listingQuality.js";
 import { confirmedMasterPack, confirmedUnitPack } from "@/domain/mercadoLivre/packageSource.js";
+import {
+  applyEditableAttributes,
+  clearResolvedRequiredAttributeErrors,
+  type EditableAttributeDefinition,
+  type ListingAttribute,
+} from "@/domain/mercadoLivre/draftAttributes.js";
 import {
   createMercadoLivreDescription,
   createMercadoLivreItem,
@@ -44,6 +51,221 @@ type MercadoLivrePictureDiagnostic = {
   issues: string[];
 };
 
+type MercadoLivreCategoryAttribute = {
+  id: string;
+  name?: string;
+  value_type?: string;
+  tags?: Record<string, boolean>;
+  values?: Array<{ id?: string; name?: string }>;
+  allowed_units?: Array<{ id?: string; name?: string }>;
+};
+
+export type MercadoLivreCategorySuggestion = {
+  categoryId: string;
+  categoryName: string;
+  categoryPath: string[];
+  domainId: string;
+  domainName: string;
+};
+
+const categoryAttributesCache = new Map<string, { expiresAt: number; attributes: MercadoLivreCategoryAttribute[] }>();
+const STANDARD_PACK_QUANTITIES = [10, 50, 100, 500, 1000];
+
+async function getMercadoLivreCategoryAttributes(categoryId: string) {
+  const cached = categoryAttributesCache.get(categoryId);
+  if (cached && cached.expiresAt > Date.now()) return cached.attributes;
+  const response = await mercadoLivreRequest<Array<MercadoLivreCategoryAttribute>>(`/categories/${categoryId}/attributes`);
+  if (!response.ok || !Array.isArray(response.body)) throw new Error("Nao foi possivel consultar os atributos atuais da categoria Mercado Livre.");
+  categoryAttributesCache.set(categoryId, { expiresAt: Date.now() + 60 * 60 * 1000, attributes: response.body });
+  return response.body;
+}
+
+function editableAttributeDefinitions(attributes: MercadoLivreCategoryAttribute[], ids: Set<string>): EditableAttributeDefinition[] {
+  return attributes
+    .filter((item) => ids.has(item.id))
+    .map((item) => ({
+      id: item.id,
+      name: String(item.name ?? item.id),
+      required: true,
+      scope: item.tags?.variation_attribute || item.tags?.defines_picture ? "variation" : "product",
+      valueType: String(item.value_type ?? "string"),
+      values: (item.values ?? []).flatMap((value) => value.name ? [{ id: value.id, name: value.name }] : []),
+      allowedUnits: (item.allowed_units ?? []).flatMap((unit) => unit.id && unit.name ? [{ id: unit.id, name: unit.name }] : []),
+    }));
+}
+
+function requiredAttributeDefinitions(attributes: MercadoLivreCategoryAttribute[]) {
+  return editableAttributeDefinitions(
+    attributes,
+    new Set(attributes.filter((item) => item.tags?.required || item.tags?.new_required || item.tags?.catalog_required).map((item) => item.id)),
+  );
+}
+
+async function persistAttributeDefinitions(productId: string, categoryId: string, definitions: EditableAttributeDefinition[]) {
+  if (!definitions.length) return;
+  const pool = getDatabasePool();
+  for (const definition of definitions) {
+    await pool.query(
+      `INSERT INTO scx_mercado_livre_product_attributes (
+         product_id, category_id, attribute_id, attribute_name, value_type,
+         is_required, values_json, allowed_units_json, attribute_scope
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)
+       ON CONFLICT (product_id, category_id, attribute_id) DO UPDATE SET
+         attribute_name=EXCLUDED.attribute_name,
+         value_type=EXCLUDED.value_type,
+         is_required=EXCLUDED.is_required,
+         values_json=EXCLUDED.values_json,
+         allowed_units_json=EXCLUDED.allowed_units_json,
+         attribute_scope=EXCLUDED.attribute_scope,
+         updated_at=now()`,
+      [productId, categoryId, definition.id, definition.name, definition.valueType,
+        definition.required, JSON.stringify(definition.values), JSON.stringify(definition.allowedUnits), definition.scope ?? "product"],
+    );
+  }
+}
+
+async function loadPersistedAttributes(productId: string, categoryId: string): Promise<ListingAttribute[]> {
+  const result = await getDatabasePool().query(
+    `SELECT attribute_id, value_id, value_name
+       FROM scx_mercado_livre_product_attributes
+      WHERE product_id=$1 AND category_id=$2 AND NULLIF(btrim(value_name),'') IS NOT NULL`,
+    [productId, categoryId],
+  );
+  return result.rows.map((row) => ({
+    id: String(row.attribute_id),
+    ...(row.value_id ? { value_id: String(row.value_id) } : {}),
+    value_name: String(row.value_name),
+  }));
+}
+
+async function loadPersistedAttributeDefinitions(productId: string, categoryId: string): Promise<EditableAttributeDefinition[]> {
+  const result = await getDatabasePool().query(
+    `SELECT attribute_id, attribute_name, value_type, is_required, values_json, allowed_units_json, attribute_scope
+       FROM scx_mercado_livre_product_attributes
+      WHERE product_id=$1 AND category_id=$2`,
+    [productId, categoryId],
+  );
+  return result.rows.map((row) => ({
+    id: String(row.attribute_id),
+    name: String(row.attribute_name),
+    required: row.is_required === true,
+    scope: row.attribute_scope === "variation" ? "variation" : "product",
+    valueType: String(row.value_type),
+    values: Array.isArray(row.values_json) ? row.values_json : [],
+    allowedUnits: Array.isArray(row.allowed_units_json) ? row.allowed_units_json : [],
+  }));
+}
+
+async function persistAttributeValues(productId: string, categoryId: string, payloads: MercadoLivreDraftPayload[]) {
+  const values = new Map<string, ListingAttribute>();
+  for (const payload of payloads) {
+    const definitions = new Set((payload.editableAttributes ?? []).map((item) => item.id));
+    const attributes = (payload.body as { attributes?: ListingAttribute[] }).attributes ?? [];
+    for (const attribute of attributes) {
+      if (definitions.has(attribute.id) && attribute.value_name?.trim()) values.set(attribute.id, attribute);
+    }
+  }
+  const pool = getDatabasePool();
+  for (const value of values.values()) {
+    await pool.query(
+      `UPDATE scx_mercado_livre_product_attributes
+          SET value_id=$4, value_name=$5, source='manual', updated_at=now()
+        WHERE product_id=$1 AND category_id=$2 AND attribute_id=$3`,
+      [productId, categoryId, value.id, value.value_id ?? null, value.value_name ?? null],
+    );
+  }
+}
+
+function normalizedFactKey(value: unknown) {
+  return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function inferredProductAttributes(input: {
+  definitions: EditableAttributeDefinition[];
+  product: Record<string, unknown>;
+  productAttributes: Array<{ name?: string; slug?: string; value?: string }>;
+  variants: Array<{ attributes: Record<string, string> }>;
+}): ListingAttribute[] {
+  const facts = new Map<string, string>();
+  const add = (key: unknown, value: unknown) => {
+    const normalizedKey = normalizedFactKey(key);
+    const normalizedValue = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+    if (normalizedKey && normalizedValue && !facts.has(normalizedKey)) facts.set(normalizedKey, normalizedValue);
+  };
+  for (const item of input.productAttributes) { add(item.name, item.value); add(item.slug, item.value); }
+  const raw = (input.product.raw_payload ?? {}) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(raw)) add(key, value);
+  const properties = raw.propriedades && typeof raw.propriedades === "object" ? raw.propriedades as Record<string, unknown> : {};
+  for (const [key, value] of Object.entries(properties)) add(key, value);
+  if (Array.isArray(raw.propriedades2)) for (const item of raw.propriedades2) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>; add(row.name, row.value); add(row.slug, row.value);
+  }
+  const variantKeys = new Set(input.variants.flatMap((variant) => Object.keys(variant.attributes ?? {})));
+  for (const key of variantKeys) {
+    const values = [...new Set(input.variants.map((variant) => String(variant.attributes?.[key] ?? "").trim()).filter(Boolean))];
+    if (values.length === 1) add(key, values[0]);
+  }
+  const aliases: Record<string, string[]> = {
+    BRAND: ["marca", "brand", "fabricante"],
+    MODEL: ["modelo", "model", "referencia"],
+    INK_COLOR: ["cor da tinta", "cor da escrita", "tinta", "ink color"],
+    COLOR: ["cor", "color"],
+    EXTERIOR_COLOR: ["cor", "cor externa", "exterior color"],
+    MATERIALS: ["material", "materiais"],
+    BOTTLE_MATERIAL: ["material", "materiais", "material da garrafa"],
+    SPORT_BOTTLE_CAPACITY: ["capacidade", "capacidade da garrafa", "volume"],
+    CUSTOMS_TARIFF_NUMBER: ["ncm"],
+  };
+  return input.definitions.flatMap((definition) => {
+    const keys = [definition.id, definition.name, ...(aliases[definition.id] ?? [])].map(normalizedFactKey);
+    let value = keys.map((key) => facts.get(key)).find(Boolean);
+    if (!value && definition.id === "BRAND") value = "SCX Laser";
+    if (!value && definition.id === "MODEL") value = String(input.product.external_id ?? input.product.sku ?? "").trim();
+    if (!value && definition.id === "INK_COLOR") {
+      const description = normalizedFactKey(input.product.description);
+      const match = description.match(/(?:tinta|escrita) (azul|preta|vermelha|verde)/);
+      if (match) value = match[1][0].toUpperCase() + match[1].slice(1);
+    }
+    if (!value && /(?:CAPACITY|VOLUME)/.test(definition.id)) {
+      const searchable = `${String(input.product.title ?? "")} ${String(input.product.description ?? "")}`;
+      const match = searchable.match(/\b(\d+(?:[.,]\d+)?)\s*(ml|l)\b/i);
+      if (match) value = `${match[1].replace(",", ".")} ${match[2].toLowerCase()}`;
+    }
+    if (!value && /MATERIAL/.test(definition.id)) {
+      const searchable = normalizedFactKey(`${String(input.product.title ?? "")} ${String(input.product.description ?? "")}`);
+      const supported = definition.values
+        .filter((item) => normalizedFactKey(item.name).length >= 3)
+        .sort((a, b) => b.name.length - a.name.length)
+        .find((item) => searchable.includes(normalizedFactKey(item.name)));
+      if (supported) value = supported.name;
+      else value = inferMaterial(String(input.product.title ?? ""), String(input.product.description ?? "")) ?? undefined;
+    }
+    if (!value) return [];
+    const option = definition.values.find((item) => normalizedFactKey(item.name) === normalizedFactKey(value));
+    return [{ id: definition.id, ...(option?.id ? { value_id: option.id } : {}), value_name: option?.name ?? value }];
+  });
+}
+
+async function persistInferredAttributeValues(productId: string, categoryId: string, values: ListingAttribute[]) {
+  for (const value of values) {
+    await getDatabasePool().query(
+      `UPDATE scx_mercado_livre_product_attributes
+          SET value_id=$4, value_name=$5, source='inferred', updated_at=now()
+        WHERE product_id=$1 AND category_id=$2 AND attribute_id=$3
+          AND (source <> 'manual' OR NULLIF(btrim(value_name),'') IS NULL)`,
+      [productId, categoryId, value.id, value.value_id ?? null, value.value_name ?? null],
+    );
+  }
+}
+
+function missingRequiredAttributeIds(payload: MercadoLivreDraftPayload) {
+  return new Set((payload.readinessErrors ?? []).flatMap((reason) => {
+    const match = reason.match(/^Atributo obrigatorio ([A-Z0-9_]+) ausente\.$/);
+    return match ? [match[1]] : [];
+  }));
+}
+
 export type MercadoLivreDraftPayload = {
   offerId: string;
   variantId: string;
@@ -55,6 +277,7 @@ export type MercadoLivreDraftPayload = {
   productCostInCents: number;
   description: string;
   selectedForPublishing?: boolean;
+  editableAttributes?: EditableAttributeDefinition[];
   readinessErrors?: string[];
   contentReadiness?: {
     score: number;
@@ -118,6 +341,28 @@ function isEditableContentError(reason: string) {
   return /foto|image|titulo comercial|descricao detalhada/i.test(reason);
 }
 
+function isEstimatedPackageError(reason: string) {
+  return /embalagem.*estimad|kit \d+ ainda e estimad/i.test(reason);
+}
+
+function withPackageAttributes(attributes: ListingAttribute[], pack: MercadoLivreDraftPayload["package"]) {
+  const packageIds = new Set(["SELLER_PACKAGE_HEIGHT", "SELLER_PACKAGE_WIDTH", "SELLER_PACKAGE_LENGTH", "SELLER_PACKAGE_WEIGHT"]);
+  return [
+    ...attributes.filter((item) => !packageIds.has(item.id)),
+    { id: "SELLER_PACKAGE_HEIGHT", value_name: `${Math.ceil(pack.heightCm)} cm` },
+    { id: "SELLER_PACKAGE_WIDTH", value_name: `${Math.ceil(pack.widthCm)} cm` },
+    { id: "SELLER_PACKAGE_LENGTH", value_name: `${Math.ceil(pack.lengthCm)} cm` },
+    { id: "SELLER_PACKAGE_WEIGHT", value_name: `${Math.ceil(pack.weightGrams)} g` },
+  ];
+}
+
+function roundUpToEnding90(amountInCents: number) {
+  const wholeReais = Math.floor(amountInCents / 100);
+  let candidate = wholeReais * 100 + 90;
+  if (candidate < amountInCents) candidate += 100;
+  return candidate;
+}
+
 function buildGenericDescription(title: string, original: string, unitsPerPack: number, variation: string) {
   return [
     `Kit com ${unitsPerPack} unidade(s) de ${title}, na opcao ${variation}.`,
@@ -169,6 +414,88 @@ async function diagnosePicture(source: string, categoryId: string, title: string
   return value;
 }
 
+type CategoryPredictionResponse = Array<{
+  category_id?: string;
+  category_name?: string;
+  domain_id?: string;
+  domain_name?: string;
+}>;
+
+type MercadoLivreCategoryDetails = {
+  id?: string;
+  name?: string;
+  path_from_root?: Array<{ id?: string; name?: string }>;
+  settings?: { listing_allowed?: boolean };
+};
+
+export async function searchMercadoLivreCategories(query: string): Promise<MercadoLivreCategorySuggestion[]> {
+  const value = query.trim().replace(/\s+/g, " ");
+  if (value.length < 4) throw new Error("Digite ao menos 4 caracteres para buscar categorias.");
+  const connection = await getMercadoLivreConnection();
+  if (!connection) throw new Error("Conecte a conta do Mercado Livre.");
+  const response = await mercadoLivreRequest<CategoryPredictionResponse>(
+    `/sites/${connection.siteId}/domain_discovery/search?limit=8&q=${encodeURIComponent(value)}`,
+  );
+  if (!response.ok || !Array.isArray(response.body)) throw new Error("O Mercado Livre nao retornou categorias agora.");
+  const predictions = response.body.filter((item) => item.category_id && item.category_name && item.domain_id);
+  const details = await Promise.all(predictions.map((item) =>
+    mercadoLivreRequest<MercadoLivreCategoryDetails>(`/categories/${item.category_id}`)
+  ));
+  return predictions.flatMap((item, index) => {
+    const detail = details[index];
+    if (!detail.ok || detail.body?.settings?.listing_allowed === false) return [];
+    const categoryPath = (detail.body?.path_from_root ?? []).flatMap((node) => node.name ? [String(node.name)] : []);
+    return [{
+      categoryId: String(item.category_id),
+      categoryName: String(detail.body?.name ?? item.category_name),
+      categoryPath: categoryPath.length ? categoryPath : [String(item.category_name)],
+      domainId: String(item.domain_id),
+      domainName: String(item.domain_name ?? item.category_name),
+    }];
+  });
+}
+
+export async function saveMercadoLivreProductCategory(input: {
+  productId: string;
+  query: string;
+  categoryId: string;
+  actorUserId: string;
+}) {
+  const product = await getDatabasePool().query(
+    `SELECT id FROM scx_catalog_products WHERE id=$1 LIMIT 1`,
+    [input.productId],
+  );
+  if (!product.rowCount) throw new Error("Produto nao encontrado.");
+  const suggestions = await searchMercadoLivreCategories(input.query);
+  const selected = suggestions.find((item) => item.categoryId === input.categoryId);
+  if (!selected) throw new Error("Escolha uma categoria sugerida pelo Mercado Livre para este produto.");
+  const details = await mercadoLivreRequest<{ settings?: { listing_allowed?: boolean } }>(`/categories/${selected.categoryId}`);
+  if (!details.ok || details.body?.settings?.listing_allowed === false) throw new Error("Essa categoria nao aceita novas publicacoes.");
+  const pool = getDatabasePool();
+  await pool.query("BEGIN");
+  try {
+    await pool.query(
+      `INSERT INTO scx_mercado_livre_product_settings (
+         product_id, category_id, category_name, category_path, domain_id, domain_name, source, updated_by
+       ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,'manual',$7)
+       ON CONFLICT (product_id) DO UPDATE SET
+         category_id=EXCLUDED.category_id,
+         category_name=EXCLUDED.category_name,
+         category_path=EXCLUDED.category_path,
+         domain_id=EXCLUDED.domain_id,
+         domain_name=EXCLUDED.domain_name,
+         source='manual', updated_by=EXCLUDED.updated_by, updated_at=now()`,
+      [input.productId, selected.categoryId, selected.categoryName, JSON.stringify(selected.categoryPath), selected.domainId, selected.domainName, input.actorUserId],
+    );
+    await pool.query(`DELETE FROM scx_mercado_livre_product_drafts WHERE product_id=$1`, [input.productId]);
+    await pool.query("COMMIT");
+  } catch (error) {
+    await pool.query("ROLLBACK");
+    throw error;
+  }
+  return selected;
+}
+
 export async function listMercadoLivreCandidates() {
   const result = await getDatabasePool().query(
     `SELECT p.id, p.scx_sku, p.title, category.name AS category,
@@ -182,8 +509,11 @@ export async function listMercadoLivreCandidates() {
             count(DISTINCT variant.id)::int AS variant_count,
             count(DISTINCT offer.id) FILTER (WHERE offer.external_id IS NOT NULL)::int AS published_variants,
             draft.status AS draft_status,
-            profile.status AS profile_status,
-            profile.category_id AS mercado_livre_category_id
+            CASE WHEN settings.product_id IS NOT NULL THEN 'reviewed' ELSE profile.status END AS profile_status,
+            COALESCE(settings.category_id, profile.category_id) AS mercado_livre_category_id,
+            settings.category_name AS mercado_livre_category_name,
+            settings.category_path AS mercado_livre_category_path,
+            (settings.product_id IS NOT NULL) AS has_category_override
        FROM scx_catalog_products p
        INNER JOIN scx_catalog_categories category ON category.id = p.category_id
        LEFT JOIN scx_catalog_product_variants variant
@@ -192,9 +522,11 @@ export async function listMercadoLivreCandidates() {
          ON offer.variant_id = variant.id AND offer.channel = 'mercado_livre'
        LEFT JOIN scx_mercado_livre_product_drafts draft ON draft.product_id = p.id
        LEFT JOIN scx_mercado_livre_category_profiles profile ON profile.catalog_category_id = p.category_id
-      GROUP BY p.id, category.name, draft.status, profile.status, profile.category_id
-      ORDER BY CASE WHEN profile.status = 'reviewed' THEN 0 ELSE 1 END, category.name, p.title
-      LIMIT 200`,
+       LEFT JOIN scx_mercado_livre_product_settings settings ON settings.product_id = p.id
+      GROUP BY p.id, category.name, draft.status, profile.status, profile.category_id,
+               settings.product_id, settings.category_id, settings.category_name, settings.category_path
+      ORDER BY CASE WHEN settings.product_id IS NOT NULL OR profile.status = 'reviewed' THEN 0 ELSE 1 END, category.name, p.title
+      `,
   );
   return result.rows.map((row) => ({
     id: String(row.id),
@@ -207,12 +539,15 @@ export async function listMercadoLivreCandidates() {
     draftStatus: row.draft_status ? String(row.draft_status) : null,
     profileStatus: row.profile_status ? String(row.profile_status) : "unreviewed",
     mercadoLivreCategoryId: row.mercado_livre_category_id ? String(row.mercado_livre_category_id) : null,
+    mercadoLivreCategoryName: row.mercado_livre_category_name ? String(row.mercado_livre_category_name) : null,
+    mercadoLivreCategoryPath: Array.isArray(row.mercado_livre_category_path) ? row.mercado_livre_category_path.map(String) : [],
+    hasCategoryOverride: row.has_category_override === true,
   }));
 }
 
 async function getPublishingData(productId: string) {
   const pool = getDatabasePool();
-  const [productResult, variantResult, imageResult, pricingRule, pricingTiers, profileResult] = await Promise.all([
+  const [productResult, variantResult, imageResult, pricingRule, pricingTiers, profileResult, productAttributeResult] = await Promise.all([
     pool.query(
       `SELECT p.id, p.sku, p.scx_sku, p.title, p.description, p.category_id, p.price_amount_in_cents,
               p.stock_quantity, category.name AS category, sp.external_id,
@@ -243,22 +578,43 @@ async function getPublishingData(productId: string) {
     ),
     getGlobalPricingRule(),
     listGlobalPricingBatchTiers(),
-    pool.query(`SELECT * FROM scx_mercado_livre_category_profiles profile
-      WHERE profile.catalog_category_id = (SELECT category_id FROM scx_catalog_products WHERE id = $1)
-      LIMIT 1`, [productId]),
+    pool.query(`SELECT profile.*,
+        settings.category_id AS override_category_id,
+        settings.category_name AS override_category_name,
+        settings.domain_id AS override_domain_id
+      FROM scx_catalog_products product
+      LEFT JOIN scx_mercado_livre_category_profiles profile ON profile.catalog_category_id=product.category_id
+      LEFT JOIN scx_mercado_livre_product_settings settings ON settings.product_id=product.id
+      WHERE product.id=$1 LIMIT 1`, [productId]),
+    pool.query(`SELECT name, slug, value FROM scx_catalog_product_attributes
+      WHERE product_id=$1 AND is_channel_attribute=true ORDER BY sort_order, id`, [productId]),
   ]);
   const product = productResult.rows[0];
   if (!product) throw new Error("Produto nao encontrado.");
-  const profile = profileResult.rows[0];
-  if (!profile || profile.status !== "reviewed") throw new Error(`Categoria ${product.category} ainda nao possui perfil Mercado Livre revisado.`);
+  const storedProfile = profileResult.rows[0];
+  const hasOverride = Boolean(storedProfile?.override_category_id);
+  if ((!storedProfile || storedProfile.status !== "reviewed") && !hasOverride) {
+    throw new Error(`Escolha uma categoria Mercado Livre para ${product.category} antes de gerar a previa.`);
+  }
+  const profile = {
+    ...storedProfile,
+    status: "reviewed",
+    adapter: storedProfile?.adapter ?? "generic",
+    category_id: storedProfile?.override_category_id ?? storedProfile?.category_id,
+    domain_id: storedProfile?.override_domain_id ?? storedProfile?.domain_id,
+    category_name: storedProfile?.override_category_name ?? null,
+    variation_axes: storedProfile?.variation_axes ?? [],
+    pack_quantities: storedProfile?.pack_quantities ?? [],
+    attribute_mapping: storedProfile?.attribute_mapping ?? [],
+  };
   const master = confirmedMasterPack(product.raw_payload);
-  const desiredQuantities = [...new Set([...(profile.pack_quantities ?? []).map(Number), master.masterUnits].filter((value) => value > 0))];
+  const desiredQuantities = STANDARD_PACK_QUANTITIES;
   const genericPacks = deriveProfilePacks({
     desiredQuantities,
     masterPack: { unitsPerPack: master.masterUnits, heightCm: master.heightCm, widthCm: master.widthCm, lengthCm: master.lengthCm, weightGrams: master.weightGrams },
     unit: confirmedUnitPack(product.raw_payload),
   });
-  const usesPenPilot = profile.adapter === "pens" && product.scx_sku === "SCX-CAN-0021";
+  const usesPenPilot = false;
   const packs = usesPenPilot ? derivePackOptions(master) : genericPacks.packs.map((pack) => ({ ...pack, warning: pack.warning ?? null }));
   if (!packs.length) throw new Error(genericPacks.errors.map((item) => item.message).join(" ") || "Produto sem embalagem comercial utilizavel.");
   const variants = variantResult.rows.map((row) => ({
@@ -282,12 +638,12 @@ async function getPublishingData(productId: string) {
       images: (row.images ?? []).map(String),
     }));
   const images = imageResult.rows.map((row) => String(row.url));
-  return { product, profile, packs, variants, images, pricingRule, genericPackErrors: genericPacks.errors };
+  return { product, profile, packs, variants, images, pricingRule, productAttributes: productAttributeResult.rows, genericPackErrors: genericPacks.errors };
 }
 
 export async function generateMercadoLivreDraft(productId: string, actorUserId: string) {
-  const { product, profile, packs, variants, images, pricingRule, genericPackErrors } = await getPublishingData(productId);
-  const usesPenPilot = profile.adapter === "pens" && product.scx_sku === "SCX-CAN-0021";
+  const { product, profile, packs, variants, images, pricingRule, productAttributes, genericPackErrors } = await getPublishingData(productId);
+  const usesPenPilot = false;
   const connection = await getMercadoLivreConnection();
   if (!connection) throw new Error("Conecte a conta do Mercado Livre antes de gerar a previa.");
   let generated: { familyName: string; description: string; payloads: MercadoLivreDraftPayload[] };
@@ -301,11 +657,11 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
     if (errors.length) throw new Error(errors.join(" "));
     generated = buildPenUserProductPayloads(penSource);
   } else {
-    const [categoryResponse, categoryDetailsResponse] = await Promise.all([
-      mercadoLivreRequest<Array<{ id: string; tags?: Record<string, boolean> }>>(`/categories/${profile.category_id}/attributes`),
+    const [categoryAttributes, categoryDetailsResponse] = await Promise.all([
+      getMercadoLivreCategoryAttributes(profile.category_id),
       mercadoLivreRequest<{ settings?: { max_pictures_per_item?: number } }>(`/categories/${profile.category_id}`),
     ]);
-    if (!categoryResponse.ok || !Array.isArray(categoryResponse.body) || !categoryDetailsResponse.ok) {
+    if (!categoryDetailsResponse.ok) {
       throw new Error("Nao foi possivel consultar as regras atuais da categoria Mercado Livre.");
     }
     const normalizedProduct = {
@@ -320,29 +676,61 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
       offerPricesInCents: {},
       variants: variants.map((variant) => ({ ...variant, offerPricesInCents: variant.offerPricesInCents })),
     };
+    const storedDefinitions = await loadPersistedAttributeDefinitions(productId, profile.category_id);
+    const categoryIds = new Set([...categoryAttributes.map((item) => item.id), ...storedDefinitions.map((item) => item.id)]);
+    const configuredMappings = (Array.isArray(profile.attribute_mapping) ? profile.attribute_mapping : [])
+      .filter((mapping: AttributeMapping) => categoryIds.has(mapping.targetId)) as AttributeMapping[];
+    const colorTarget = categoryAttributes.find((item) => item.tags?.defines_picture)
+      ?? categoryAttributes.find((item) => ["COLOR", "EXTERIOR_COLOR"].includes(item.id));
+    const automaticMappings: AttributeMapping[] = [
+      ...(categoryIds.has("MODEL") ? [{ targetId: "MODEL", source: "supplierCode" } as AttributeMapping] : []),
+      ...(categoryIds.has("MATERIALS") ? [{ targetId: "MATERIALS", source: "inferredMaterial" } as AttributeMapping] : []),
+      ...(colorTarget ? [{ targetId: colorTarget.id, source: "variantAttribute", sourceKey: "Cor" } as AttributeMapping] : []),
+    ];
+    const attributeMappings = [...configuredMappings];
+    for (const mapping of automaticMappings) {
+      if (!attributeMappings.some((item) => item.targetId === mapping.targetId)) attributeMappings.push(mapping);
+    }
+    const configuredAxes = (profile.variation_axes ?? []) as string[];
+    const requestedAxes = configuredAxes.length
+      ? configuredAxes
+      : colorTarget && variants.some((variant) => Boolean(variant.attributes?.Cor)) ? ["Cor"] : [];
+    const variationAxes = requestedAxes.filter((axis) => attributeMappings.some((mapping) =>
+      mapping.source === "variantAttribute" && mapping.sourceKey === axis
+      && Boolean(categoryAttributes.find((item) => item.id === mapping.targetId)?.tags?.allow_variations
+        || categoryAttributes.find((item) => item.id === mapping.targetId)?.tags?.variation_attribute
+        || categoryAttributes.find((item) => item.id === mapping.targetId)?.tags?.defines_picture)
+    ));
     const normalizedProfile: PublishingProfile = {
       status: profile.status,
       categoryId: profile.category_id,
       domainId: profile.domain_id,
       familyName: String(product.title),
       maxPictures: Number(categoryDetailsResponse.body?.settings?.max_pictures_per_item ?? 12),
-      variationAxes: profile.variation_axes ?? [],
+      variationAxes,
       packQuantities: packs.map((pack) => pack.unitsPerPack),
-      attributeMappings: Array.isArray(profile.attribute_mapping) && profile.attribute_mapping.length
-        ? profile.attribute_mapping as AttributeMapping[]
-        : profile.adapter === "pens"
-          ? [
-              { targetId: "BRAND", source: "literal", valueName: "Generica" },
-              { targetId: "MODEL", source: "supplierCode" },
-              { targetId: "MATERIALS", source: "inferredMaterial" },
-              { targetId: "EXTERIOR_COLOR", source: "variantAttribute", sourceKey: "Cor" },
-              ...(/escrita em azul/i.test(String(product.description ?? ""))
-                ? [{ targetId: "INK_COLOR", source: "literal", valueName: "Azul" } as AttributeMapping]
-                : []),
-            ]
-          : [],
+      attributeMappings,
     };
-    const generic = buildGenericUserProductPayloads({ product: normalizedProduct, profile: normalizedProfile, categoryAttributes: categoryResponse.body, packages: packs });
+    const variationTargetIds = new Set(attributeMappings
+      .filter((mapping) => mapping.source === "variantAttribute" && variationAxes.includes(mapping.sourceKey ?? ""))
+      .map((mapping) => mapping.targetId));
+    const discoveredDefinitions = requiredAttributeDefinitions(categoryAttributes).map((definition) => ({
+      ...definition,
+      scope: variationTargetIds.has(definition.id) ? "variation" as const : "product" as const,
+    }));
+    await persistAttributeDefinitions(productId, profile.category_id, discoveredDefinitions);
+    const requiredDefinitions = [...new Map(
+      [...storedDefinitions, ...discoveredDefinitions].filter((item) => item.required).map((item) => [item.id, item])
+    ).values()];
+    const inferredAttributes = inferredProductAttributes({
+      definitions: requiredDefinitions,
+      product,
+      productAttributes,
+      variants,
+    });
+    await persistInferredAttributeValues(productId, profile.category_id, inferredAttributes);
+    const persistedAttributes = await loadPersistedAttributes(productId, profile.category_id);
+    const generic = buildGenericUserProductPayloads({ product: normalizedProduct, profile: normalizedProfile, categoryAttributes, packages: packs });
     const byVariant = new Map(variants.map((variant) => [variant.id, variant]));
     generated = {
       familyName: String(product.title),
@@ -350,8 +738,26 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
       payloads: generic.payloads.map((payload) => {
         const variant = byVariant.get(payload.variantId)!;
         const priceInCents = variant.offerPricesInCents[String(payload.unitsPerPack)];
+        const missingAttributeIds = new Set(payload.errors
+          .filter((item) => item.code === "REQUIRED_ATTRIBUTE_MISSING" && item.attributeId)
+          .map((item) => item.attributeId));
+        const editableAttributes = requiredDefinitions.filter((item) =>
+          missingAttributeIds.has(item.id)
+          || persistedAttributes.some((value) => value.id === item.id)
+          || storedDefinitions.some((value) => value.id === item.id)
+        );
+        const attributeResult = applyEditableAttributes({
+          existing: ((payload.body as { attributes?: ListingAttribute[] }).attributes ?? []),
+          submitted: persistedAttributes,
+          definitions: requiredDefinitions,
+        });
+        const readinessErrors = clearResolvedRequiredAttributeErrors(
+          [...payload.errors.map((item) => item.message), ...genericPackErrors.map((item) => item.message)],
+          attributeResult.attributes,
+        );
         return {
           ...payload,
+          editableAttributes,
           package: { ...payload.package, warning: payload.package.warning ?? null },
           color: payload.variationIdentity,
           unitPriceInCents: Math.round(priceInCents / payload.unitsPerPack),
@@ -362,22 +768,41 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
             payload.unitsPerPack,
             payload.variationIdentity,
           ),
+          body: { ...payload.body, attributes: attributeResult.attributes },
           financialStatus: payload.publishable ? "healthy" as const : "blocked" as const,
-          readinessErrors: [...payload.errors.map((item) => item.message), ...genericPackErrors.map((item) => item.message)],
+          readinessErrors,
         };
       }),
     };
     source = { normalizedProduct, normalizedProfile, packs };
   }
+  const savedPackages = await getDatabasePool().query(
+    `SELECT variant_id, units_per_pack, package_height_cm, package_width_cm,
+            package_length_cm, package_weight_grams, package_confidence
+       FROM scx_catalog_marketplace_offers
+      WHERE product_id=$1 AND channel='mercado_livre' AND package_confidence='confirmed'`,
+    [productId],
+  );
+  const packagesByOffer = new Map(savedPackages.rows.map((row) => [
+    `${row.variant_id}:${row.units_per_pack}`,
+    {
+      heightCm: Number(row.package_height_cm), widthCm: Number(row.package_width_cm),
+      lengthCm: Number(row.package_length_cm), weightGrams: Number(row.package_weight_grams),
+    },
+  ]));
   for (const payload of generated.payloads) {
     const body = payload.body as { pictures?: Array<{ source?: string }> };
     const variant = variants.find((item) => item.id === payload.variantId);
+    const savedPackage = packagesByOffer.get(`${payload.variantId}:${payload.unitsPerPack}`);
+    if (savedPackage) {
+      payload.package = { ...payload.package, ...savedPackage, confidence: "confirmed", warning: null };
+      const attributes = (payload.body as { attributes?: ListingAttribute[] }).attributes ?? [];
+      (payload.body as { attributes: ListingAttribute[] }).attributes = withPackageAttributes(attributes, payload.package);
+      payload.readinessErrors = (payload.readinessErrors ?? []).filter((reason) => !isEstimatedPackageError(reason));
+    }
     const orderedSources = [...new Set([
-      variant?.images?.[0],
-      images[0],
       ...(variant?.images ?? []),
-      ...(body.pictures ?? []).map((picture) => picture.source),
-      ...images,
+      images[0],
     ].filter(Boolean) as string[])].slice(0, 12);
     body.pictures = orderedSources.map((source) => ({ source }));
     payload.readinessErrors = (payload.readinessErrors ?? []).filter((reason) => !isEditableContentError(reason));
@@ -400,7 +825,7 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
     const results = await Promise.all(batch.map((request) => diagnosePicture(request.source, request.categoryId, request.title, request.pictureType)));
     results.forEach((diagnostic) => diagnosticsByKey.set(`${profile.category_id}:${diagnostic.pictureType}:${diagnostic.source}`, diagnostic));
   }
-  const costCache = new Map<string, Promise<{ saleFeeInCents: number; shippingCostInCents: number }>>();
+  const costCache = new Map<string, Promise<{ saleFeeInCents: number; shippingCostInCents: number; calculationError?: string }>>();
   for (const payload of generated.payloads) {
       const body = payload.body as {
         price: number;
@@ -436,40 +861,63 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
       }
       const pack = payload.package;
       const dimensions = `${Math.ceil(pack.heightCm)}x${Math.ceil(pack.widthCm)}x${Math.ceil(pack.lengthCm)},${Math.ceil(pack.weightGrams)}`;
-      const costKey = `${body.category_id}:${body.listing_type_id}:${body.price}:${dimensions}`;
-      if (!costCache.has(costKey)) {
-        costCache.set(costKey, (async () => {
-          const feeQuery = new URLSearchParams({ price: String(body.price), listing_type_id: body.listing_type_id, category_id: body.category_id, currency_id: "BRL", logistic_type: "drop_off" });
-          const shippingQuery = new URLSearchParams({ dimensions, verbose: "true", item_price: String(body.price), listing_type_id: body.listing_type_id, mode: "me2", condition: "new", logistic_type: "drop_off", free_shipping: "true" });
+      const getCosts = (price: number) => {
+        const costKey = `${body.category_id}:${body.listing_type_id}:${price}:${dimensions}`;
+        if (!costCache.has(costKey)) costCache.set(costKey, (async () => {
+          const feeQuery = new URLSearchParams({ price: String(price), listing_type_id: body.listing_type_id, category_id: body.category_id, currency_id: "BRL", logistic_type: "drop_off" });
+          const shippingQuery = new URLSearchParams({ dimensions, verbose: "true", item_price: String(price), listing_type_id: body.listing_type_id, mode: "me2", condition: "new", logistic_type: "drop_off", free_shipping: "true" });
           const [feeResponse, shippingResponse] = await Promise.all([
             mercadoLivreRequest<{ sale_fee_amount?: number }>(`/sites/${connection.siteId}/listing_prices?${feeQuery}`),
             mercadoLivreRequest<{ coverage?: { all_country?: { list_cost?: number } } }>(`/users/${connection.userId}/shipping_options/free?${shippingQuery}`),
           ]);
-          if (!feeResponse.ok || !shippingResponse.ok) throw new Error(`Nao foi possivel calcular custos do kit ${pack.unitsPerPack}.`);
           return {
             saleFeeInCents: Math.round(Number(feeResponse.body?.sale_fee_amount ?? 0) * 100),
             shippingCostInCents: Math.round(Number(shippingResponse.body?.coverage?.all_country?.list_cost ?? 0) * 100),
+            ...(!feeResponse.ok || !shippingResponse.ok ? { calculationError: `Custos logisticos do kit ${pack.unitsPerPack} indisponiveis; revise a embalagem.` } : {}),
           };
         })());
+        return costCache.get(costKey)!;
+      };
+      let priceInCents = Math.round(Number(body.price) * 100);
+      let costs = await getCosts(body.price);
+      const classify = () => classifyOfferFinancials({
+          priceInCents,
+          saleFeeInCents: costs.saleFeeInCents,
+          shippingCostInCents: costs.shippingCostInCents,
+          productCostInCents: payload.productCostInCents,
+          operationalCostInCents: pricingRule.marketplaceOperationalCostAmountInCents,
+          taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
+          minProfitInCents: pricingRule.marketplaceMinProfitAmountInCents,
+          minReturnPercentage: pricingRule.marketplaceMinReturnPercentage,
+          maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
+        });
+      let financials = classify();
+      for (let attempt = 0; attempt < 3 && !costs.calculationError
+        && financials.blockReasons.some((reason) => /Resultado estimado|Retorno sobre o custo/.test(reason)); attempt += 1) {
+        const requiredProfit = Math.max(
+          pricingRule.marketplaceMinProfitAmountInCents,
+          Math.ceil(payload.productCostInCents * pricingRule.marketplaceMinReturnPercentage / 100),
+        );
+        const feeRate = priceInCents > 0 ? costs.saleFeeInCents / priceInCents : 0;
+        const taxRate = pricingRule.marketplaceTaxReservePercentage / 100;
+        const denominator = Math.max(0.01, 1 - feeRate - taxRate);
+        const requiredPrice = (
+          payload.productCostInCents + costs.shippingCostInCents
+          + pricingRule.marketplaceOperationalCostAmountInCents + requiredProfit
+        ) / denominator;
+        const nextPrice = roundUpToEnding90(Math.max(requiredPrice, priceInCents + 100));
+        priceInCents = nextPrice;
+        body.price = nextPrice / 100;
+        payload.unitPriceInCents = Math.ceil(nextPrice / payload.unitsPerPack);
+        costs = await getCosts(body.price);
+        financials = classify();
       }
-      const { saleFeeInCents, shippingCostInCents } = await costCache.get(costKey)!;
-      const priceInCents = Math.round(Number(body.price) * 100);
-      const financials = classifyOfferFinancials({
-        priceInCents,
-        saleFeeInCents,
-        shippingCostInCents,
-        productCostInCents: payload.productCostInCents,
-        operationalCostInCents: pricingRule.marketplaceOperationalCostAmountInCents,
-        taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
-        minProfitInCents: pricingRule.marketplaceMinProfitAmountInCents,
-        minReturnPercentage: pricingRule.marketplaceMinReturnPercentage,
-        maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
-      });
       if (payload.package.confidence !== "confirmed") {
         financials.blockReasons.push("Embalagem estimada: confirme medidas e peso antes de publicar.");
         financials.publishable = false;
         financials.financialStatus = "blocked";
       }
+      if (costs.calculationError) financials.blockReasons.push(costs.calculationError);
       for (const readinessError of payload.readinessErrors ?? []) {
         if (!financials.blockReasons.includes(readinessError)) financials.blockReasons.push(readinessError);
       }
@@ -593,6 +1041,28 @@ export async function getMercadoLivreDraft(productId: string): Promise<MercadoLi
   );
   const row = result.rows[0];
   if (!row) return null;
+  const payloads = (row.payloads ?? []) as MercadoLivreDraftPayload[];
+  const legacyMissingIds = new Set(payloads.flatMap((payload) =>
+    payload.editableAttributes?.length ? [] : [...missingRequiredAttributeIds(payload)]
+  ));
+  if (legacyMissingIds.size) {
+    const definitions = editableAttributeDefinitions(
+      await getMercadoLivreCategoryAttributes(String(row.category_id)),
+      legacyMissingIds,
+    );
+    await persistAttributeDefinitions(productId, String(row.category_id), definitions);
+    const persisted = await loadPersistedAttributes(productId, String(row.category_id));
+    for (const payload of payloads) {
+      if (!payload.editableAttributes?.length) {
+        const ids = missingRequiredAttributeIds(payload);
+        payload.editableAttributes = definitions.filter((item) => ids.has(item.id));
+        const body = payload.body as { attributes?: ListingAttribute[] };
+        const applied = applyEditableAttributes({ existing: body.attributes ?? [], submitted: persisted, definitions });
+        body.attributes = applied.attributes;
+        payload.readinessErrors = clearResolvedRequiredAttributeErrors(payload.readinessErrors, applied.attributes);
+      }
+    }
+  }
   return {
     productId: String(row.product_id),
     categoryId: String(row.category_id),
@@ -600,7 +1070,7 @@ export async function getMercadoLivreDraft(productId: string): Promise<MercadoLi
     familyName: String(row.family_name),
     description: String(row.description),
     status: String(row.status),
-    payloads: row.payloads ?? [],
+    payloads,
     validationResults: row.validation_results ?? [],
     errorMessage: row.error_message ? String(row.error_message) : null,
     updatedAt: iso(row.updated_at),
@@ -613,6 +1083,14 @@ type DraftOfferEdit = {
   selected: boolean;
   price: number;
   pictureSources: string[];
+  attributes: ListingAttribute[];
+  package: {
+    heightCm: number;
+    widthCm: number;
+    lengthCm: number;
+    weightGrams: number;
+    confirmed: boolean;
+  };
 };
 
 export async function editMercadoLivreDraft(input: {
@@ -652,12 +1130,32 @@ export async function editMercadoLivreDraft(input: {
     const pictureSources = [...new Set(edit.pictureSources.map((item) => item.trim()).filter(Boolean))];
     if (edit.selected && (pictureSources.length < 2 || pictureSources.length > 12)) throw new Error(`${payload.color}: selecione de 2 a 12 fotos.`);
     if (pictureSources.some((url) => !allowedPictures.has(url))) throw new Error(`${payload.color}: a selecao contem uma foto fora da biblioteca do produto.`);
-    if (edit.selected && !mediaLibrary.some((item) => item.url === pictureSources[0] && item.variantId === payload.variantId)) {
-      throw new Error(`${payload.color}: a primeira foto deve ser desta variacao.`);
-    }
     if (!Number.isFinite(edit.price) || edit.price <= 0) throw new Error(`${payload.color}: informe um preco valido.`);
+    const packageValues = [edit.package.heightCm, edit.package.widthCm, edit.package.lengthCm, edit.package.weightGrams];
+    if (edit.selected && packageValues.some((value) => !Number.isFinite(value) || value <= 0)) {
+      throw new Error(`${payload.color}: informe dimensoes e peso validos para a embalagem.`);
+    }
+    const nextPackage = {
+      ...payload.package,
+      heightCm: edit.package.heightCm,
+      widthCm: edit.package.widthCm,
+      lengthCm: edit.package.lengthCm,
+      weightGrams: Math.ceil(edit.package.weightGrams),
+      confidence: edit.package.confirmed ? "confirmed" as const : "estimated" as const,
+      warning: edit.package.confirmed ? null : "Embalagem ainda precisa ser confirmada antes de publicar.",
+    };
+    const currentAttributes = ((payload.body as { attributes?: ListingAttribute[] }).attributes ?? []);
+    const attributeResult = applyEditableAttributes({
+      existing: currentAttributes,
+      submitted: edit.attributes,
+      definitions: payload.editableAttributes ?? [],
+    });
+    if (edit.selected && attributeResult.missing.length) {
+      throw new Error(`${payload.color}: preencha ${attributeResult.missing.map((item) => item.name).join(", ")}.`);
+    }
     return {
       ...payload,
+      package: nextPackage,
       selectedForPublishing: edit.selected,
       description,
       body: {
@@ -666,14 +1164,22 @@ export async function editMercadoLivreDraft(input: {
         listing_type_id: input.listingTypeId,
         price: Math.round(edit.price * 100) / 100,
         pictures: pictureSources.map((source) => ({ source })),
+        attributes: withPackageAttributes(attributeResult.attributes, nextPackage),
       },
     };
   });
-  const costCache = new Map<string, Promise<{ saleFeeInCents: number; shippingCostInCents: number }>>();
+  const costCache = new Map<string, Promise<{ saleFeeInCents: number; shippingCostInCents: number; calculationError?: string }>>();
   for (const payload of payloads.filter((item) => item.unitsPerPack === input.unitsPerPack && item.selectedForPublishing !== false)) {
     const body = payload.body as { price: number; listing_type_id: string; category_id: string; family_name: string; pictures: Array<{ source: string }>; attributes?: unknown[] };
     const previousDynamicErrors = new Set((payload.contentReadiness?.checks ?? []).map((check) => `${check.label}: corrija antes de publicar.`));
-    const structuralErrors = (payload.readinessErrors ?? []).filter((reason) => !isEditableContentError(reason) && !previousDynamicErrors.has(reason));
+    const structuralErrors = clearResolvedRequiredAttributeErrors(
+      (payload.readinessErrors ?? []).filter((reason) =>
+        !isEditableContentError(reason)
+        && !previousDynamicErrors.has(reason)
+        && !(payload.package.confidence === "confirmed" && isEstimatedPackageError(reason))
+      ),
+      body.attributes as ListingAttribute[] | undefined,
+    );
     payload.pictureDiagnostics = [];
     for (const [index, picture] of body.pictures.entries()) {
       payload.pictureDiagnostics.push(await diagnosePicture(picture.source, body.category_id, body.family_name, index === 0 ? "thumbnail" : "other"));
@@ -699,8 +1205,11 @@ export async function editMercadoLivreDraft(input: {
         mercadoLivreRequest<{ sale_fee_amount?: number }>(`/sites/${connection.siteId}/listing_prices?${feeQuery}`),
         mercadoLivreRequest<{ coverage?: { all_country?: { list_cost?: number } } }>(`/users/${connection.userId}/shipping_options/free?${shippingQuery}`),
       ]);
-      if (!fee.ok || !shipping.ok) throw new Error(`Nao foi possivel recalcular os custos do kit ${pack.unitsPerPack}.`);
-      return { saleFeeInCents: Math.round(Number(fee.body?.sale_fee_amount ?? 0) * 100), shippingCostInCents: Math.round(Number(shipping.body?.coverage?.all_country?.list_cost ?? 0) * 100) };
+      return {
+        saleFeeInCents: Math.round(Number(fee.body?.sale_fee_amount ?? 0) * 100),
+        shippingCostInCents: Math.round(Number(shipping.body?.coverage?.all_country?.list_cost ?? 0) * 100),
+        ...(!fee.ok || !shipping.ok ? { calculationError: `Custos logisticos do kit ${pack.unitsPerPack} indisponiveis; revise a embalagem.` } : {}),
+      };
     })());
     const costs = await costCache.get(key)!;
     const financials = classifyOfferFinancials({
@@ -713,12 +1222,26 @@ export async function editMercadoLivreDraft(input: {
       maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
     });
     if (payload.package.confidence !== "confirmed") financials.blockReasons.push("Embalagem estimada: confirme medidas e peso antes de publicar.");
+    if (costs.calculationError) financials.blockReasons.push(costs.calculationError);
     for (const reason of payload.readinessErrors) if (!financials.blockReasons.includes(reason)) financials.blockReasons.push(reason);
     if (financials.blockReasons.length) { financials.publishable = false; financials.financialStatus = "blocked"; }
     payload.fees = financials;
     payload.publishable = financials.publishable;
     payload.financialStatus = financials.financialStatus;
   }
+  await Promise.all(payloads
+    .filter((item) => item.unitsPerPack === input.unitsPerPack)
+    .map((payload) => getDatabasePool().query(
+      `UPDATE scx_catalog_marketplace_offers SET
+         package_height_cm=$2, package_width_cm=$3, package_length_cm=$4,
+         package_weight_grams=$5, package_confidence=$6, package_warning=$7,
+         updated_at=now()
+       WHERE id=$1 AND product_id=$8 AND channel='mercado_livre'`,
+      [payload.offerId, payload.package.heightCm, payload.package.widthCm,
+        payload.package.lengthCm, payload.package.weightGrams, payload.package.confidence,
+        payload.package.warning, input.productId],
+    )));
+  await persistAttributeValues(input.productId, draft.categoryId, payloads.filter((item) => item.unitsPerPack === input.unitsPerPack));
   await getDatabasePool().query(
     `UPDATE scx_mercado_livre_product_drafts SET family_name=$2, description=$3, content_source='manual',
        payloads=$4::jsonb, validation_results='[]'::jsonb, status='draft', error_message=NULL, updated_at=now()
@@ -734,6 +1257,8 @@ async function assertMercadoLivreDraftFresh(draft: MercadoLivreDraft) {
        product.updated_at,
        COALESCE(supplier.updated_at, product.updated_at),
        COALESCE(profile.updated_at, product.updated_at),
+       COALESCE(settings.updated_at, product.updated_at),
+       COALESCE(MAX(product_attribute.updated_at), product.updated_at),
        COALESCE(pricing.updated_at, product.updated_at),
        COALESCE(MAX(variant.updated_at), product.updated_at)
      ) AS source_updated_at
@@ -741,9 +1266,13 @@ async function assertMercadoLivreDraftFresh(draft: MercadoLivreDraft) {
      LEFT JOIN scx_catalog_supplier_products supplier ON supplier.id = product.supplier_product_id
      LEFT JOIN scx_catalog_product_variants variant ON variant.product_id = product.id
      LEFT JOIN scx_mercado_livre_category_profiles profile ON profile.catalog_category_id = product.category_id
+     LEFT JOIN scx_mercado_livre_product_settings settings ON settings.product_id = product.id
+     LEFT JOIN scx_mercado_livre_product_attributes product_attribute
+       ON product_attribute.product_id = product.id
+      AND product_attribute.category_id = COALESCE(settings.category_id, profile.category_id)
      LEFT JOIN scx_catalog_pricing_rules pricing ON pricing.scope = 'global' AND pricing.is_active = true
      WHERE product.id = $1
-     GROUP BY product.updated_at, supplier.updated_at, profile.updated_at, pricing.updated_at`,
+     GROUP BY product.updated_at, supplier.updated_at, profile.updated_at, settings.updated_at, pricing.updated_at`,
     [draft.productId],
   );
   const sourceUpdatedAt = result.rows[0]?.source_updated_at ? new Date(result.rows[0].source_updated_at) : null;
@@ -774,15 +1303,55 @@ export async function validateMercadoLivreDraft(productId: string, unitsPerPack?
     });
   }
   const failed = results.filter((result) => !result.ok);
+  if (failed.length) {
+    const missingIds = new Set(failed.flatMap((result) => result.errors.flatMap((rawError) => {
+      const error = rawError as { code?: string; message?: string };
+      if (error.code !== "item.attributes.missing_required") return [];
+      const match = String(error.message ?? "").match(/\[([A-Z0-9_, ]+)\]/);
+      return match ? match[1].split(",").map((item) => item.trim()).filter(Boolean) : [];
+    })));
+    if (missingIds.size) {
+      const categoryAttributes = await getMercadoLivreCategoryAttributes(draft.categoryId);
+      const knownDefinitions = editableAttributeDefinitions(categoryAttributes, missingIds);
+      const knownIds = new Set(knownDefinitions.map((item) => item.id));
+      const definitions = [
+        ...knownDefinitions,
+        ...[...missingIds].filter((id) => !knownIds.has(id)).map((id) => ({
+          id, name: id, required: true, valueType: "string", values: [], allowedUnits: [],
+        })),
+      ];
+      await persistAttributeDefinitions(productId, draft.categoryId, definitions);
+      const failedSkus = new Set(failed.map((result) => result.sku));
+      for (const payload of draft.payloads.filter((item) => failedSkus.has(item.sku))) {
+        const current = new Map((payload.editableAttributes ?? []).map((item) => [item.id, item]));
+        for (const definition of definitions) current.set(definition.id, definition);
+        payload.editableAttributes = [...current.values()];
+        payload.readinessErrors ??= [];
+        payload.fees ??= {
+          saleFeeInCents: 0, shippingCostInCents: 0, netRevenueInCents: 0,
+          contributionInCents: 0, contributionPercentage: 0, operationalCostInCents: 0,
+          taxReserveInCents: 0, estimatedProfitInCents: 0, returnPercentage: 0, blockReasons: [],
+        };
+        for (const definition of definitions) {
+          const reason = `Atributo obrigatorio ${definition.id} ausente.`;
+          if (!payload.readinessErrors.includes(reason)) payload.readinessErrors.push(reason);
+          if (!payload.fees.blockReasons.includes(reason)) payload.fees.blockReasons.push(reason);
+        }
+        payload.publishable = false;
+        payload.financialStatus = "blocked";
+      }
+    }
+  }
   await getDatabasePool().query(
     `UPDATE scx_mercado_livre_product_drafts SET
        validation_results = $2::jsonb,
        status = $3,
        error_message = $4,
+       payloads = $5::jsonb,
        validated_at = CASE WHEN $3 = 'validated' THEN now() ELSE validated_at END,
        updated_at = now()
      WHERE product_id = $1`,
-    [productId, JSON.stringify(results), failed.length ? "error" : "validated", failed.length ? `${failed.length} variacao(oes) rejeitada(s) pelo validador.` : null],
+    [productId, JSON.stringify(results), failed.length ? "error" : "validated", failed.length ? `${failed.length} variacao(oes) rejeitada(s) pelo validador.` : null, JSON.stringify(draft.payloads)],
   );
   return getMercadoLivreDraft(productId);
 }

@@ -73,6 +73,8 @@ export async function saveGlobalPricingRule(formData: FormData) {
     marketplaceMaxProductCostAmountInCents: parseMoneyToCents(formData.get("marketplaceMaxProductCost")),
     marketplaceOperationalCostAmountInCents: parseMoneyToCents(formData.get("marketplaceOperationalCost")),
     marketplaceTaxReservePercentage: parseDecimal(formData.get("marketplaceTaxReservePercentage"), 0),
+    marketplaceStockPauseThreshold: parseInteger(formData.get("marketplaceStockPauseThreshold"), 2),
+    marketplaceLowStockWarningThreshold: parseInteger(formData.get("marketplaceLowStockWarningThreshold"), 50),
     roundingMode: parseRoundingMode(formData.get("roundingMode")),
     tiers: parseBatchTiers(formData),
   });

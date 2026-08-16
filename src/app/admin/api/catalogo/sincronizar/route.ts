@@ -14,9 +14,19 @@ import {
   listGlobalPricingBatchTiers,
 } from "@/domain/pricing/rules";
 import {
-  syncAllCatalogProductsFromAsiaImport,
+  listAsiaImportSyncFailures,
+  syncCatalogProductsFromAsiaImportPage,
   syncCatalogProductFromAsiaImport,
 } from "@/domain/suppliers/asiaImportRepository";
+
+export const maxDuration = 300;
+
+export async function GET() {
+  const session = await getCurrentAdminSession();
+  if (!session) return NextResponse.json({ ok: false, message: "Sessao expirada." }, { status: 401 });
+  if (!roleCan(session.role, "supplier:import")) return NextResponse.json({ ok: false, message: "Sem permissao." }, { status: 403 });
+  return NextResponse.json({ ok: true, errors: await listAsiaImportSyncFailures() });
+}
 
 async function toAdminProducts(products: CatalogProduct[]) {
   const catalogAccess = getCatalogAccess();
@@ -92,26 +102,28 @@ export async function POST(request: Request) {
     }
 
     if (syncAll) {
-      const result = await syncAllCatalogProductsFromAsiaImport();
-      const products = await listAdminProducts();
+      const page = Math.max(1, Math.round(Number(body?.page) || 1));
+      const result = await syncCatalogProductsFromAsiaImportPage(page);
+      const done = result.page >= result.totalPages;
+      const products = done ? await listAdminProducts() : undefined;
 
-      await writeAdminAuditLog({
-        actorUserId: session.id,
-        action: "catalog_product_updated",
-        entityType: "catalog_product",
-        entityId: "catalog",
-        summary: `Sincronizacao geral: ${result.syncedCount}/${result.totalCount} produto(s).`,
-      });
+      if (done) {
+        await writeAdminAuditLog({
+          actorUserId: session.id,
+          action: "catalog_product_updated",
+          entityType: "catalog_product",
+          entityId: "catalog",
+          summary: `Sincronizacao geral concluida em ${result.totalPages} lote(s).`,
+        });
 
-      revalidatePath("/admin/catalogo");
-      revalidatePath("/catalogo");
+        revalidatePath("/admin/catalogo");
+        revalidatePath("/catalogo");
+      }
 
       return NextResponse.json({
         ok: true,
-        message:
-          result.errorCount > 0
-            ? `Sincronizados ${result.syncedCount} de ${result.totalCount}. ${result.errorCount} falharam.`
-            : `Sincronizados ${result.syncedCount} produto(s).`,
+        done,
+        message: done ? "Sincronizacao completa concluida." : `Lote ${result.page} de ${result.totalPages} concluido.`,
         products,
         ...result,
       });

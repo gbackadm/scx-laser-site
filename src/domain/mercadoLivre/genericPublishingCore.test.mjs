@@ -11,6 +11,10 @@ const categoryAttributes = [
   { id: "CAPACITY", tags: { variation_attribute: true } },
 ];
 
+test("normaliza material descrito no feminino", () => {
+  assert.equal(inferMaterial("Garrafa Plástica"), "Plastico");
+});
+
 function simpleInput() {
   return {
     product: {
@@ -158,15 +162,17 @@ test("deriva caixa-mestre confirmada e kits menores estimados em grade conservad
   assert.ok(result.packs[0].weightGrams >= 5775);
 });
 
-test("omite estimativas sem dados unitarios e retorna erro de prontidao", () => {
+test("mantem todas as opcoes com estimativa conservadora sem dados unitarios", () => {
   const result = deriveProfilePacks({
     desiredQuantities: [10, 50, 100],
     masterPack: { unitsPerPack: 50, heightCm: 30, widthCm: 40, lengthCm: 50, weightGrams: 30000 },
   });
-  assert.equal(result.ready, false);
-  assert.deepEqual(result.packs.map((pack) => pack.unitsPerPack), [50]);
-  assert.ok(result.errors.some((item) => item.code === "UNIT_LOGISTICS_INCOMPLETE" && item.unitsPerPack === 10));
-  assert.ok(result.errors.some((item) => item.code === "PACK_EXCEEDS_MASTER" && item.unitsPerPack === 100));
+  assert.equal(result.ready, true);
+  assert.deepEqual(result.packs.map((pack) => pack.unitsPerPack), [10, 50, 100]);
+  assert.equal(result.packs[0].confidence, "estimated");
+  assert.equal(result.packs[1].confidence, "confirmed");
+  assert.equal(result.packs[2].confidence, "estimated");
+  assert.match(result.packs[2].warning, /caixa-mestre/);
 });
 
 test("prioriza imagens da variacao e respeita o limite da categoria", () => {
@@ -188,15 +194,16 @@ test("prioriza imagens da variacao e respeita o limite da categoria", () => {
   ]);
 });
 
-test("nao deriva pacotes quando a caixa-mestre esta incompleta", () => {
+test("cria opcoes editaveis quando a caixa-mestre esta incompleta", () => {
   const result = deriveProfilePacks({
     desiredQuantities: [10],
     masterPack: { unitsPerPack: 50, heightCm: 0, widthCm: 40, lengthCm: 50, weightGrams: 30000 },
     unit: { heightCm: 25, widthCm: 7, lengthCm: 7, weightGrams: 550 },
   });
-  assert.equal(result.ready, false);
-  assert.equal(result.packs.length, 0);
-  assert.equal(result.errors[0].code, "MASTER_PACKAGE_INCOMPLETE");
+  assert.equal(result.ready, true);
+  assert.equal(result.packs.length, 1);
+  assert.equal(result.packs[0].confidence, "estimated");
+  assert.match(result.packs[0].warning, /Dados logisticos incompletos/);
 });
 
 test("bloqueia apenas a variacao sem estoque e preserva a que pode formar o kit", () => {

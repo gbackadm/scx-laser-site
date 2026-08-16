@@ -63,7 +63,7 @@ export default async function PublicCatalogPage() {
   );
 
   return (
-    <main className="min-h-screen bg-[#050606] text-white">
+    <main className="public-site min-h-screen bg-[#050606] text-white">
       <header className="border-b border-white/10 bg-black">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-4 sm:px-8 md:flex-row md:items-center md:justify-between lg:px-12">
           <Link href="/" className="inline-flex items-center gap-3">

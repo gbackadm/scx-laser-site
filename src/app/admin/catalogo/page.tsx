@@ -1,8 +1,11 @@
 import { CatalogPanel } from "@/components/admin/CatalogPanel";
+import { AdminNotice } from "@/components/admin/AdminNotice";
 import { requireAdminSession } from "@/domain/auth/session";
 import { getCatalogAccess } from "@/domain/catalog/access";
 import { roleCan } from "@/domain/catalog/permissions";
 import { toAdminProductList } from "@/domain/catalog/viewModels";
+import { listCatalogChannelMappings } from "@/domain/catalog/adminRepository";
+import { listCatalogMercadoLivreLinks } from "@/domain/mercadoLivre/listingsRepository";
 import {
   calculateBatchTierPrices,
   getGlobalPricingRule,
@@ -97,18 +100,29 @@ export default async function AdminCatalogPage({
   }
 
   const catalogAccess = getCatalogAccess();
-  const [catalogProducts, categories, pricingRule, batchTiers] = await Promise.all([
+  const [catalogProducts, categories, pricingRule, batchTiers, mercadoLivreLinks, channelMappings] = await Promise.all([
     catalogAccess.listCatalogProducts(),
     catalogAccess.listCategories(),
     getGlobalPricingRule(),
     listGlobalPricingBatchTiers(),
+    listCatalogMercadoLivreLinks(),
+    listCatalogChannelMappings(),
   ]);
+  const mercadoLivreByProduct = new Map(mercadoLivreLinks.map((item) => [item.productId, item]));
+  const channelsByProduct = new Map<string, typeof channelMappings>();
+  for (const mapping of channelMappings) {
+    const current = channelsByProduct.get(mapping.productId) ?? [];
+    current.push(mapping);
+    channelsByProduct.set(mapping.productId, current);
+  }
   const adminProducts = toAdminProductList(catalogProducts, categories).map(
     (product) => {
       const baseAmountInCents = product.costInCents ?? product.priceInCents;
 
       return {
         ...product,
+        mercadoLivre: mercadoLivreByProduct.get(product.catalogId),
+        channelMappings: channelsByProduct.get(product.catalogId) ?? [],
         batchPrices: calculateBatchTierPrices(
           baseAmountInCents,
           pricingRule,
@@ -130,11 +144,7 @@ export default async function AdminCatalogPage({
   return (
     <main className="min-w-0 min-h-screen bg-[#050606] text-white">
       <div className="mx-auto grid min-w-0 max-w-7xl gap-5 px-4 py-5 sm:px-8 sm:py-6 lg:px-12">
-        {message ? (
-          <div className="rounded border border-white/10 bg-[#0d0f10] px-4 py-3 text-sm font-bold text-zinc-100">
-            {message}
-          </div>
-        ) : null}
+        <AdminNotice message={message} />
 
         <CatalogPanel
           categories={adminCategories}

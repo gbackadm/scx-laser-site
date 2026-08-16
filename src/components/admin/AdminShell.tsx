@@ -7,15 +7,16 @@ import {
   Gauge,
   LogOut,
   Menu,
+  Moon,
   PackagePlus,
   ShoppingBag,
-  Store,
+  Sun,
   Truck,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { logoutAdmin } from "@/app/admin/actions";
 import { roleCan } from "@/domain/catalog/permissions";
@@ -36,7 +37,6 @@ const navigation = [
   { href: "/admin/catalogo/novo", label: "Novo produto", icon: PackagePlus, permission: "catalog:edit" as const },
   { href: "/admin/importacao", label: "Asia Import", icon: Truck, permission: "supplier:import" as const },
   { href: "/admin/precos", label: "Precos", icon: DollarSign, permission: "catalog:view" as const },
-  { href: "/admin/olist", label: "Olist", icon: Store, permission: "supplier:import" as const },
   { href: "/admin/mercado-livre", label: "Mercado Livre", icon: ShoppingBag, permission: "supplier:import" as const },
 ];
 
@@ -49,9 +49,25 @@ const roleLabels: Record<UserRole, string> = {
 export function AdminShell({ session, children }: AdminShellProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const visibleNavigation = navigation.filter((item) =>
     roleCan(session.role, item.permission),
   );
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("scx-admin-theme");
+    if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.adminTheme = theme;
+    window.localStorage.setItem("scx-admin-theme", theme);
+    return () => { delete document.documentElement.dataset.adminTheme; };
+  }, [theme]);
+
+  function toggleTheme() {
+    setTheme((current) => current === "light" ? "dark" : "light");
+  }
 
   function isActive(href: string) {
     if (href === "/admin") return pathname === href;
@@ -109,6 +125,15 @@ export function AdminShell({ session, children }: AdminShellProps) {
       </nav>
 
       <div className="border-t border-white/10 p-3">
+        <button
+          type="button"
+          onClick={toggleTheme}
+          title={theme === "light" ? "Ativar modo escuro" : "Ativar modo claro"}
+          className="flex min-h-11 w-full items-center gap-3 rounded px-3 text-sm font-bold text-zinc-400 transition hover:bg-white/[0.04] hover:text-white"
+        >
+          {theme === "light" ? <Moon size={18} aria-hidden="true" /> : <Sun size={18} aria-hidden="true" />}
+          {theme === "light" ? "Modo escuro" : "Modo claro"}
+        </button>
         <Link
           href="/"
           target="_blank"
@@ -141,7 +166,7 @@ export function AdminShell({ session, children }: AdminShellProps) {
   );
 
   return (
-    <div className="min-h-screen bg-[#050606] text-white">
+    <div className="admin-shell min-h-screen bg-[#050606] text-white" data-admin-theme={theme}>
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 border-r border-white/10 lg:block">
         {sidebar}
       </aside>
@@ -157,16 +182,21 @@ export function AdminShell({ session, children }: AdminShellProps) {
           />
           <span className="text-sm font-black">Administracao</span>
         </Link>
-        <button
-          type="button"
-          title={mobileOpen ? "Fechar menu" : "Abrir menu"}
-          aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
-          aria-expanded={mobileOpen}
-          onClick={() => setMobileOpen((open) => !open)}
-          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/12 text-zinc-200"
-        >
-          {mobileOpen ? <X size={20} /> : <Menu size={20} />}
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={toggleTheme} title={theme === "light" ? "Ativar modo escuro" : "Ativar modo claro"} aria-label={theme === "light" ? "Ativar modo escuro" : "Ativar modo claro"} className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/12 text-zinc-200">
+            {theme === "light" ? <Moon size={19} /> : <Sun size={19} />}
+          </button>
+          <button
+            type="button"
+            title={mobileOpen ? "Fechar menu" : "Abrir menu"}
+            aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen((open) => !open)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/12 text-zinc-200"
+          >
+            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+        </div>
       </header>
 
       {mobileOpen ? (

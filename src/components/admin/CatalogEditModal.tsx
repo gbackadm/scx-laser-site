@@ -217,9 +217,9 @@ export function CatalogEditModal({
               </label>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-2">
               <label className="grid gap-2 text-sm font-bold text-zinc-200">
-                Preco
+                Preco base
                 <input
                   value={price}
                   onChange={(event) => setPrice(event.target.value)}
@@ -227,6 +227,22 @@ export function CatalogEditModal({
                   className="h-11 rounded border border-white/12 bg-black/35 px-3 text-sm text-white outline-none focus:border-laser"
                 />
               </label>
+              <div className="grid gap-2 text-sm font-bold text-zinc-200">
+                Custo unitario
+                <div className="flex h-11 items-center rounded border border-white/10 bg-black/20 px-3 text-sm text-zinc-300">
+                  {product.costInCents === undefined
+                    ? "Nao informado"
+                    : new Intl.NumberFormat("pt-BR", {
+                        style: "currency",
+                        currency: "BRL",
+                      }).format(product.costInCents / 100)}
+                </div>
+                <span className="text-[0.68rem] font-semibold text-zinc-500">
+                  {product.supplierProductId
+                    ? "Atualizado automaticamente pelo fornecedor."
+                    : "Custo registrado no catalogo."}
+                </span>
+              </div>
               <label className="grid gap-2 text-sm font-bold text-zinc-200">
                 Estoque
                 <input

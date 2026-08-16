@@ -126,7 +126,7 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-5 px-4 py-5 sm:px-8 sm:py-6 lg:px-12">
-        <AdminNotice />
+        <AdminNotice message={message} />
 
         <section className="rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">
@@ -160,12 +160,6 @@ export default async function AdminImportPage({ searchParams }: ImportPageProps)
               Ultima rotina: {formatDateTime(autoSyncSettings.lastAutoSyncAt)}
             </div>
           </div>
-
-          {message ? (
-            <div className="mt-5 rounded border border-white/10 bg-black/35 px-4 py-3 text-sm font-bold text-zinc-100">
-              {message}
-            </div>
-          ) : null}
 
           <form action={runAsiaImport} className="mt-6 grid gap-4 lg:grid-cols-5">
             <label className="grid gap-2 text-sm font-bold text-zinc-200">

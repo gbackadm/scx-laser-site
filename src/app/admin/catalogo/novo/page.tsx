@@ -117,13 +117,7 @@ export default async function NewCatalogProductPage({
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-5 px-4 py-5 sm:px-8 sm:py-6 lg:px-12">
-        <AdminNotice />
-
-        {message ? (
-          <div className="rounded border border-white/10 bg-[#0d0f10] px-4 py-3 text-sm font-bold text-zinc-100">
-            {message}
-          </div>
-        ) : null}
+        <AdminNotice message={message} />
 
         <section className="rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-laser">

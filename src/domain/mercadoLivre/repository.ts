@@ -156,11 +156,40 @@ export async function saveMercadoLivreNotification(input: {
   );
 }
 
-export async function countPendingMercadoLivreNotifications() {
+export async function getMercadoLivreSyncOverview() {
+  const [notificationResult, offerResult] = await Promise.all([
+    getDatabasePool().query(
+      `SELECT count(*) FILTER (WHERE status='pending')::int AS pending_events,
+              count(*) FILTER (WHERE status='failed')::int AS failed_events,
+              max(received_at) AS last_event_at
+         FROM scx_mercado_livre_notifications`,
+    ),
+    getDatabasePool().query(
+      `SELECT count(*) FILTER (WHERE sync_status='failed' OR last_stock_sync_error IS NOT NULL)::int AS failed_offers,
+              max(last_stock_sync_at) AS last_stock_sync_at
+         FROM scx_catalog_marketplace_offers
+        WHERE channel='mercado_livre' AND external_id IS NOT NULL`,
+    ),
+  ]);
+  const notification = notificationResult.rows[0] ?? {};
+  const offer = offerResult.rows[0] ?? {};
+  const date = (value: unknown) => value instanceof Date ? value.toISOString() : value ? String(value) : null;
+  return {
+    pendingEvents: Number(notification.pending_events ?? 0),
+    failedEvents: Number(notification.failed_events ?? 0),
+    failedOffers: Number(offer.failed_offers ?? 0),
+    lastEventAt: date(notification.last_event_at),
+    lastStockSyncAt: date(offer.last_stock_sync_at),
+  };
+}
+
+export async function markPendingMercadoLivreNotificationsProcessed() {
   const result = await getDatabasePool().query(
-    `SELECT count(*)::int AS total FROM scx_mercado_livre_notifications WHERE status = 'pending'`,
+    `UPDATE scx_mercado_livre_notifications
+        SET status='processed', processed_at=now(), error_message=NULL
+      WHERE status='pending'`,
   );
-  return Number(result.rows[0]?.total ?? 0);
+  return result.rowCount ?? 0;
 }
 
 export async function getValidMercadoLivreAccessToken() {

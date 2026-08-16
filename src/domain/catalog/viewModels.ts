@@ -24,6 +24,19 @@ export type AdminProduct = {
   publicationStatus: CatalogPublicationStatus;
   status: AdminProductStatus;
   updatedAt: string;
+  mercadoLivre?: {
+    listingCount: number;
+    activeCount: number;
+    pausedCount: number;
+    lowStockCount: number;
+    failedCount: number;
+    firstPermalink: string | null;
+  };
+  channelMappings?: Array<{
+    channel: string;
+    externalId: string;
+    syncStatus: "synced" | "pending" | "failed" | "disabled";
+  }>;
 };
 
 export type AdminProductBatchPrice = {

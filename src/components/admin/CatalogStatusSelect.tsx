@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 
+import { AdminNotice } from "@/components/admin/AdminNotice";
 import type { CatalogPublicationStatus } from "@/domain/catalog/types";
 
 type CatalogStatusSelectProps = {
@@ -137,11 +138,7 @@ export function CatalogStatusSelect({
           </select>
         </span>
       </label>
-      {message ? (
-        <span className="text-[0.68rem] font-bold text-zinc-400">
-          {message}
-        </span>
-      ) : null}
+      <AdminNotice message={message} />
     </div>
   );
 }

@@ -301,7 +301,7 @@ export default async function EditCatalogProductPage({
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6 sm:px-8 lg:px-12">
-        <AdminNotice />
+        <AdminNotice message={message} />
 
         <section className="rounded-md border border-white/10 bg-[#0d0f10] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)] sm:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -323,12 +323,6 @@ export default async function EditCatalogProductPage({
               </strong>
             </div>
           </div>
-
-          {message ? (
-            <div className="mt-5 rounded border border-white/10 bg-black/35 px-4 py-3 text-sm font-bold text-zinc-100">
-              {message}
-            </div>
-          ) : null}
 
           {!canEditCatalog ? (
             <div className="mt-5 rounded border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm font-bold text-amber-100">

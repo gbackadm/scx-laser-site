@@ -47,10 +47,96 @@ continuem legiveis pela aplicacao.
 - `npm run build`: compilacao equivalente a producao.
 - `npm run db:migrate`: tabelas idempotentes da integracao.
 
-## Proximas etapas do canal
+## Vinculo dos anuncios
 
-1. Conectar e validar a conta real.
-2. Implementar categorizacao e validacao previa por categoria.
-3. Montar familias e User Products usando as variacoes atuais.
-4. Publicar primeiro um produto piloto com imagens por variacao.
-5. Ativar lotes, estoque e precos somente depois da auditoria do piloto.
+Cada anuncio criado pela aplicacao e gravado em
+`scx_catalog_marketplace_offers` com o produto, a variacao, o tamanho do kit,
+o SKU SCX e o ID `MLB` retornado pelo Mercado Livre. O vinculo aparece no
+catalogo administrativo com as quantidades de anuncios ativos e pausados,
+alerta de estoque baixo e atalho para o canal.
+
+Anuncios antigos encontrados na conta, mas ainda sem esse registro, aparecem
+como `Somente no ML` e nao entram na automacao de estoque ate serem vinculados.
+
+### Edicao de anuncio vinculado
+
+Na aba `Anuncios publicados`, o botao `Editar` abre o anuncio existente pelo
+seu ID `MLB`; ele nunca cria uma segunda publicacao. O editor consulta os dados
+atuais do Mercado Livre e permite alterar preco, descricao e selecionar/ordenar
+de 2 a 12 fotos da biblioteca completa do produto. A foto na posicao 1 e a
+principal do anuncio.
+
+O titulo pode ser alterado somente enquanto `sold_quantity` for zero, conforme
+a regra oficial do Mercado Livre. Depois da primeira venda, o campo fica
+bloqueado no painel. O estoque nao e editavel nessa janela porque permanece sob
+controle da rotina automatica baseada no catalogo.
+
+## Controle de estoque
+
+- A fonte de verdade e o estoque da variacao no Supabase.
+- O saldo enviado ao canal e `floor(estoque da variacao / unidades do kit)`.
+- Abaixo de `marketplace_low_stock_warning_threshold` (padrao: 50 kits), o
+  painel sinaliza o saldo em vermelho, sem bloquear a publicacao.
+- Em `marketplace_stock_pause_threshold` ou abaixo (padrao: 2 kits), a rotina
+  pausa automaticamente o anuncio.
+- Somente anuncios pausados pela propria rotina podem ser reativados
+  automaticamente quando o estoque se recuperar. Pausas manuais sao
+  preservadas.
+- A rota `/admin/api/mercado-livre/estoque` executa a conferencia manual pelo
+  painel ou por chamada agendada autenticada com `CRON_SECRET`.
+
+Na aba `Anuncios publicados`, o estoque retornado pelo Mercado Livre e exibido
+ao lado do numero de kits calculado pelo banco. A tabela permite filtrar estoque
+normal, baixo ou zerado e ordenar pelo saldo no canal.
+
+## Metricas operacionais
+
+A aba `Metricas` consulta a janela movel dos ultimos 30 dias e apresenta:
+
+- visitas oficiais por anuncio e consolidado diario;
+- pedidos pagos, unidades vendidas e conversao aproximada por visita;
+- vendas brutas e comissao informada nos itens dos pedidos;
+- anuncios ativos, pausados, estoque baixo ou zerado;
+- perguntas ainda sem resposta;
+- busca, filtros, ordenacao e atalho para o anuncio publicado.
+
+As visitas sao armazenadas por 10 minutos em
+`scx_mercado_livre_listing_metrics`. Esse cache persiste entre reinicios e
+deploys, evita dezenas de chamadas repetidas e sinaliza leituras indisponiveis
+em vez de transforma-las silenciosamente em zero. O comando
+`npm run mercado-livre:check-metrics` valida a tabela e a ultima leitura antes
+de um deploy.
+
+## Proxima etapa de producao
+
+Ao preparar o deploy, agendar a rota de estoque na Vercel usando o mesmo
+segredo das rotinas privadas. O agendamento so deve ser ativado depois do
+deploy final aprovado, evitando consumo de builds durante o desenvolvimento.
+
+## Produtos e categorias futuras
+
+O catalogo atual e uma amostra de validacao, nao uma lista fechada de produtos.
+Quando um produto novo ou uma categoria nova aparecer, o fluxo deve:
+
+1. consultar a descoberta de dominio do Mercado Livre usando o titulo do produto;
+2. exigir confirmacao humana da categoria antes de gerar a previa;
+3. consultar os atributos atuais da categoria diretamente na API;
+4. pre-preencher valores comprovados pelo banco, incluindo marca `SCX Laser`,
+   modelo/SKU do fornecedor, material inferivel e cor da variacao;
+5. persistir novos campos obrigatorios para que possam ser revisados e reutilizados;
+6. validar a oferta na API oficial antes de habilitar a publicacao.
+
+Uma categoria sugerida nunca e gravada automaticamente como regra global. Um
+grupo amplo do catalogo pode conter produtos que pertencem a categorias
+diferentes no Mercado Livre.
+
+`npm run mercado-livre:audit-categories` escolhe uma amostra por categoria
+existente, consulta as regras atuais do canal e separa pendencias de categoria,
+atributos, imagens, estoque e logistica. A automacao deve ser executada sempre
+que uma categoria nova entrar no catalogo e antes de uma publicacao em massa.
+
+O seletor nao usa uma lista local fechada: ele consulta a arvore vigente do
+Mercado Livre e exibe o caminho completo ate a categoria folha. Por exemplo,
+uma chave de fenda pode aparecer em `Ferramentas > Ferramentas Manuais >
+Fixacao > Chaves de Fenda`. `npm run mercado-livre:backfill-category-paths`
+completa essa trilha nos produtos configurados antes da migracao 039.

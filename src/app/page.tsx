@@ -18,7 +18,7 @@ export default async function Home() {
   const whatsappUrl = siteWhatsappUrl(siteSettings);
 
   return (
-    <>
+    <div className="public-site public-home">
       <Header whatsappUrl={whatsappUrl} showAdminAccess={Boolean(adminSession)} />
       <main>
         <Hero whatsappUrl={whatsappUrl} />
@@ -35,6 +35,6 @@ export default async function Home() {
         />
       </main>
       <FloatingWhatsApp whatsappUrl={whatsappUrl} />
-    </>
+    </div>
   );
 }

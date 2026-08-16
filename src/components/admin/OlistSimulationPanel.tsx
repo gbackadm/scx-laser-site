@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useState, useTransition } from "react";
 
+import { AdminNotice } from "@/components/admin/AdminNotice";
+
 import { saveOlistSettings } from "@/app/admin/olist/actions";
 import type {
   AdminOlistRun,
@@ -330,11 +332,7 @@ export function OlistSimulationPanel({
           </button>
         </div>
 
-        {message ? (
-          <div className="mt-4 rounded border border-white/10 bg-black/25 px-4 py-3 text-sm font-bold text-zinc-200">
-            {message}
-          </div>
-        ) : null}
+        <AdminNotice message={message} />
       </div>
 
       {simulation ? (

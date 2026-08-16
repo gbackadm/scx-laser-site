@@ -12,7 +12,7 @@ export function Hero({ whatsappUrl }: HeroProps) {
   return (
     <section
       id="inicio"
-      className="relative isolate overflow-hidden border-b border-white/12 bg-carbon text-white"
+      className="public-hero relative isolate overflow-hidden border-b border-white/12 bg-carbon text-white"
     >
       <div className="absolute inset-y-0 right-0 -z-10 h-full w-full lg:w-[66%]">
         <Image

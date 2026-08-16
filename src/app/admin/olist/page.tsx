@@ -117,12 +117,7 @@ export default async function AdminOlistPage({
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-5 px-4 py-5 sm:px-8 sm:py-6 lg:px-12">
-        <AdminNotice />
-        {message ? (
-          <div className="rounded border border-white/10 bg-[#0d0f10] px-4 py-3 text-sm font-bold text-zinc-100">
-            {message}
-          </div>
-        ) : null}
+        <AdminNotice message={message} />
         <OlistSimulationPanel
           settings={settings}
           runs={runs}

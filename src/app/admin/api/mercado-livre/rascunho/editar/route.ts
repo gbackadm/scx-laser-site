@@ -26,6 +26,21 @@ export async function POST(request: Request) {
         selected: item.selected === true,
         price: Number(item.price),
         pictureSources: Array.isArray(item.pictureSources) ? item.pictureSources.map(String) : [],
+        attributes: Array.isArray(item.attributes) ? item.attributes.map((attribute: Record<string, unknown>) => ({
+          id: String(attribute.id ?? ""),
+          value_id: attribute.value_id ? String(attribute.value_id) : undefined,
+          value_name: attribute.value_name ? String(attribute.value_name) : undefined,
+        })) : [],
+        package: (() => {
+          const value = item.package && typeof item.package === "object" ? item.package as Record<string, unknown> : {};
+          return {
+            heightCm: Number(value.heightCm),
+            widthCm: Number(value.widthCm),
+            lengthCm: Number(value.lengthCm),
+            weightGrams: Number(value.weightGrams),
+            confirmed: value.confirmed === true,
+          };
+        })(),
       })),
     });
     const selected = (draft?.payloads ?? []).filter((item) =>

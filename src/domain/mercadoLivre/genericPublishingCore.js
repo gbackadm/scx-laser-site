@@ -26,7 +26,7 @@ export function inferMaterial(title, description = "") {
     { terms: ["aluminio"], value: "Aluminio" },
     { terms: ["vidro"], value: "Vidro" },
     { terms: ["madeira", "bambu"], value: "Madeira" },
-    { terms: ["plastico", "polipropileno", "acrilico"], value: "Plastico" },
+    { terms: ["plastico", "plastica", "polipropileno", "acrilico"], value: "Plastico" },
   ];
   return rules.find((rule) => rule.terms.some((term) => source.includes(term)))?.value ?? null;
 }
@@ -136,18 +136,34 @@ export function deriveProfilePacks({ desiredQuantities = [], masterPack, unit })
     && [masterPack?.heightCm, masterPack?.widthCm, masterPack?.lengthCm, masterPack?.weightGrams]
       .every((value) => Number(value) > 0);
   if (!masterComplete) {
-    addError(errors, "MASTER_PACKAGE_INCOMPLETE", "Caixa-mestre confirmada sem quantidade, dimensoes ou peso bruto.");
-    return { packs, errors, ready: false };
+    const unitHeight = Number(unit?.heightCm) > 0 ? Number(unit.heightCm) : 10;
+    const unitWidth = Number(unit?.widthCm) > 0 ? Number(unit.widthCm) : 10;
+    const unitLength = Number(unit?.lengthCm) > 0 ? Number(unit.lengthCm) : 10;
+    const unitWeight = Number(unit?.weightGrams) > 0 ? Number(unit.weightGrams) : 100;
+    const quantities = [...new Set(desiredQuantities.map(Number))]
+      .filter((quantity) => Number.isInteger(quantity) && quantity > 0)
+      .sort((left, right) => left - right);
+    for (const unitsPerPack of quantities) {
+      const heightCount = Math.ceil(Math.cbrt(unitsPerPack));
+      const widthCount = Math.ceil(Math.sqrt(unitsPerPack / heightCount));
+      const lengthCount = Math.ceil(unitsPerPack / (heightCount * widthCount));
+      packs.push({
+        unitsPerPack,
+        heightCm: Math.ceil(unitHeight * heightCount + 2),
+        widthCm: Math.ceil(unitWidth * widthCount + 2),
+        lengthCm: Math.ceil(unitLength * lengthCount + 2),
+        weightGrams: Math.ceil(unitWeight * unitsPerPack * 1.1),
+        confidence: "estimated",
+        warning: `Dados logisticos incompletos para o kit ${unitsPerPack}; revise todas as medidas e o peso antes de publicar.`,
+      });
+    }
+    return { packs, errors, ready: true };
   }
 
   const quantities = [...new Set(desiredQuantities.map(Number))]
     .filter((quantity) => Number.isInteger(quantity) && quantity > 0)
     .sort((left, right) => left - right);
   for (const unitsPerPack of quantities) {
-    if (unitsPerPack > masterQuantity) {
-      addError(errors, "PACK_EXCEEDS_MASTER", `Kit ${unitsPerPack} excede a caixa-mestre de ${masterQuantity} unidades.`, { unitsPerPack });
-      continue;
-    }
     if (unitsPerPack === masterQuantity) {
       packs.push({ ...masterPack, unitsPerPack, confidence: "confirmed", warning: null });
       continue;
@@ -155,25 +171,42 @@ export function deriveProfilePacks({ desiredQuantities = [], masterPack, unit })
 
     const unitComplete = [unit?.heightCm, unit?.widthCm, unit?.lengthCm, unit?.weightGrams]
       .every((value) => Number(value) > 0);
-    if (!unitComplete) {
-      addError(errors, "UNIT_LOGISTICS_INCOMPLETE", `Kit ${unitsPerPack} nao pode ser estimado sem dimensoes e peso unitarios.`, { unitsPerPack });
+    const grid = unitComplete && unitsPerPack < masterQuantity
+      ? estimateGridPackage(unitsPerPack, unit, masterPack)
+      : null;
+    if (grid) {
+      const proportionalGrossWeight = masterPack.weightGrams * (unitsPerPack / masterQuantity);
+      const bufferedUnitWeight = unit.weightGrams * unitsPerPack * 1.05;
+      packs.push({
+        unitsPerPack,
+        heightCm: grid.heightCm,
+        widthCm: grid.widthCm,
+        lengthCm: grid.lengthCm,
+        weightGrams: Math.ceil(Math.max(proportionalGrossWeight, bufferedUnitWeight)),
+        confidence: "estimated",
+        warning: `Embalagem estimada em grade para ${unitsPerPack} unidades; confirme antes de publicar.`,
+      });
       continue;
     }
-    const grid = estimateGridPackage(unitsPerPack, unit, masterPack);
-    if (!grid) {
-      addError(errors, "PACK_GRID_NOT_READY", `Nao foi encontrada uma grade conservadora para o kit ${unitsPerPack} dentro da caixa-mestre.`, { unitsPerPack });
-      continue;
-    }
-    const proportionalGrossWeight = masterPack.weightGrams * (unitsPerPack / masterQuantity);
-    const bufferedUnitWeight = unit.weightGrams * unitsPerPack * 1.05;
+
+    const boxes = Math.max(1, Math.ceil(unitsPerPack / masterQuantity));
+    const dimensions = [
+      { key: "heightCm", value: masterPack.heightCm },
+      { key: "widthCm", value: masterPack.widthCm },
+      { key: "lengthCm", value: masterPack.lengthCm },
+    ].sort((left, right) => left.value - right.value);
+    const estimated = {
+      heightCm: masterPack.heightCm,
+      widthCm: masterPack.widthCm,
+      lengthCm: masterPack.lengthCm,
+    };
+    estimated[dimensions[0].key] = dimensions[0].value * boxes;
     packs.push({
       unitsPerPack,
-      heightCm: grid.heightCm,
-      widthCm: grid.widthCm,
-      lengthCm: grid.lengthCm,
-      weightGrams: Math.ceil(Math.max(proportionalGrossWeight, bufferedUnitWeight)),
+      ...estimated,
+      weightGrams: Math.ceil(masterPack.weightGrams * (unitsPerPack / masterQuantity)),
       confidence: "estimated",
-      warning: `Embalagem estimada em grade para ${unitsPerPack} unidades; confirme antes de publicar.`,
+      warning: `Embalagem conservadora baseada na caixa-mestre para ${unitsPerPack} unidades; ajuste e confirme antes de publicar.`,
     });
   }
   return { packs, errors, ready: errors.length === 0 };

@@ -1,26 +1,28 @@
-import { ArrowRight, CheckCircle2, CircleAlert, KeyRound, ListChecks, PackagePlus, Radio } from "lucide-react";
+import { ArrowRight, BarChart3, CheckCircle2, KeyRound, ListChecks, PackagePlus, Radio } from "lucide-react";
 import Link from "next/link";
 
 import { MercadoLivrePublishPanel } from "@/components/admin/MercadoLivrePublishPanel";
 import { MercadoLivreListingsPanel } from "@/components/admin/MercadoLivreListingsPanel";
+import { MercadoLivreMetricsPanel } from "@/components/admin/MercadoLivreMetricsPanel";
+import { AdminNotice } from "@/components/admin/AdminNotice";
 import { requireAdminSession } from "@/domain/auth/session";
 import { roleCan } from "@/domain/catalog/permissions";
 import {
-  countPendingMercadoLivreNotifications,
+  getMercadoLivreSyncOverview,
   getMercadoLivreConnection,
 } from "@/domain/mercadoLivre/repository";
 import {
   getMercadoLivreDraft,
   listMercadoLivreCandidates,
 } from "@/domain/mercadoLivre/publishingRepository";
-import { listManagedMercadoLivreListings } from "@/domain/mercadoLivre/listingsRepository";
+import { getMercadoLivreMetrics, listManagedMercadoLivreListings } from "@/domain/mercadoLivre/listingsRepository";
 import { getGlobalPricingRule } from "@/domain/pricing/rules";
 
 export const metadata = { title: "Admin SCX Laser | Mercado Livre" };
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  searchParams?: Promise<{ conectado?: string; erro?: string; testada?: string; aba?: string }>;
+  searchParams?: Promise<{ conectado?: string; erro?: string; testada?: string; aba?: string; productId?: string }>;
 };
 
 function formatDate(value: string | null) {
@@ -42,11 +44,11 @@ const errorMessages: Record<string, string> = {
 };
 
 export default async function MercadoLivrePage({ searchParams }: PageProps) {
-  const [session, params, connection, pending, candidates, pricingRule] = await Promise.all([
+  const [session, params, connection, syncOverview, candidates, pricingRule] = await Promise.all([
     requireAdminSession(),
     searchParams,
     getMercadoLivreConnection(),
-    countPendingMercadoLivreNotifications(),
+    getMercadoLivreSyncOverview(),
     listMercadoLivreCandidates(),
     getGlobalPricingRule(),
   ]);
@@ -58,12 +60,15 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
     process.env.MERCADO_LIVRE_TOKEN_ENCRYPTION_KEY,
   );
   const expired = connection?.expiresAt ? new Date(connection.expiresAt) <= new Date() : false;
-  const activeTab = params?.aba === "anuncios" ? "anuncios" : "publicar";
-  const pilot = candidates.find((candidate) => candidate.profileStatus === "reviewed") ?? candidates[0];
+  const syncFailures = syncOverview.failedEvents + syncOverview.failedOffers;
+  const activeTab = params?.aba === "anuncios" ? "anuncios" : params?.aba === "metricas" ? "metricas" : "publicar";
+  const requestedProduct = candidates.find((candidate) => candidate.id === params?.productId);
+  const pilot = requestedProduct ?? candidates.find((candidate) => candidate.profileStatus === "reviewed") ?? candidates[0];
   const canPublish = Boolean(connection && roleCan(session.role, "catalog:publish"));
-  const [initialDraft, listings] = await Promise.all([
+  const [initialDraft, listings, metrics] = await Promise.all([
     activeTab === "publicar" && pilot ? getMercadoLivreDraft(pilot.id) : null,
     activeTab === "anuncios" && canPublish ? listManagedMercadoLivreListings() : [],
+    activeTab === "metricas" && canPublish ? getMercadoLivreMetrics() : null,
   ]);
 
   return (
@@ -98,21 +103,10 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
           ) : null}
         </div>
 
-        {params?.conectado ? (
-          <div className="mt-5 flex items-center gap-3 border-y border-emerald-400/25 bg-emerald-950/20 px-4 py-3 text-sm font-bold text-emerald-200">
-            <CheckCircle2 size={18} /> Conta conectada com seguranca.
-          </div>
-        ) : null}
-        {params?.testada ? (
-          <div className="mt-5 flex items-center gap-3 border-y border-emerald-400/25 bg-emerald-950/20 px-4 py-3 text-sm font-bold text-emerald-200">
-            <CheckCircle2 size={18} /> Conexao testada com sucesso.
-          </div>
-        ) : null}
-        {params?.erro ? (
-          <div className="mt-5 flex items-center gap-3 border-y border-red-400/25 bg-red-950/20 px-4 py-3 text-sm font-bold text-red-200">
-            <CircleAlert size={18} /> {errorMessages[params.erro] ?? "Nao foi possivel concluir a operacao."}
-          </div>
-        ) : null}
+        <AdminNotice
+          message={params?.conectado ? "Conta conectada com seguranca." : params?.testada ? "Conexao testada com sucesso." : params?.erro ? errorMessages[params.erro] ?? "Nao foi possivel concluir a operacao." : null}
+          tone={params?.erro ? "error" : "success"}
+        />
 
         <section className="mt-7 grid border-y border-white/10 md:grid-cols-3">
           <div className="border-b border-white/10 px-1 py-5 md:border-b-0 md:border-r md:px-5 md:first:pl-1">
@@ -131,8 +125,15 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
           </div>
           <div className="px-1 py-5 md:px-5">
             <Radio size={18} className="text-zinc-500" />
-            <p className="mt-3 text-sm font-bold text-zinc-400">Eventos aguardando</p>
-            <p className="mt-1 font-black text-white">{pending}</p>
+            <p className="mt-3 text-sm font-bold text-zinc-400">Sincronizacao</p>
+            <p className={`mt-1 font-black ${syncFailures ? "text-red-300" : "text-emerald-300"}`}>
+              {syncFailures ? `${syncFailures} falha(s) para revisar` : "Automatica e em dia"}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {syncOverview.lastStockSyncAt
+                ? `Ultima conferencia: ${formatDate(syncOverview.lastStockSyncAt)}`
+                : "Primeira conferencia ainda nao concluida"}
+            </p>
           </div>
         </section>
 
@@ -161,19 +162,21 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
         </section>
         {canPublish ? (
           <>
-            <nav className="mb-7 flex gap-1 border-b border-white/10" aria-label="Mercado Livre">
-              <Link href="/admin/mercado-livre" className={`inline-flex min-h-11 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "publicar" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><PackagePlus size={17} /> Preparar publicacao</Link>
-              <Link href="/admin/mercado-livre?aba=anuncios" className={`inline-flex min-h-11 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "anuncios" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><ListChecks size={17} /> Anuncios publicados</Link>
+            <nav id="painel-ml" className="mb-7 flex scroll-mt-4 gap-1 overflow-x-auto border-b border-white/10" aria-label="Mercado Livre">
+              <Link href="/admin/mercado-livre#painel-ml" className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "publicar" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><PackagePlus size={17} /> Preparar publicacao</Link>
+              <Link href="/admin/mercado-livre?aba=anuncios#painel-ml" className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "anuncios" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><ListChecks size={17} /> Anuncios publicados</Link>
+              <Link href="/admin/mercado-livre?aba=metricas#painel-ml" className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "metricas" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><BarChart3 size={17} /> Metricas</Link>
             </nav>
             {activeTab === "publicar" ? (
-              <MercadoLivrePublishPanel candidates={candidates} initialDraft={initialDraft} commercialRules={{
+              <MercadoLivrePublishPanel candidates={candidates} initialDraft={initialDraft} initialProductId={pilot?.id} commercialRules={{
                 minProfitInCents: pricingRule.marketplaceMinProfitAmountInCents,
                 minReturnPercentage: pricingRule.marketplaceMinReturnPercentage,
                 maxProductCostInCents: pricingRule.marketplaceMaxProductCostAmountInCents,
                 operationalCostInCents: pricingRule.marketplaceOperationalCostAmountInCents,
                 taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
+                lowStockWarningThreshold: pricingRule.marketplaceLowStockWarningThreshold,
               }} />
-            ) : <MercadoLivreListingsPanel listings={listings} />}
+            ) : activeTab === "anuncios" ? <MercadoLivreListingsPanel listings={listings} /> : metrics ? <MercadoLivreMetricsPanel metrics={metrics} /> : null}
           </>
         ) : null}
       </div>

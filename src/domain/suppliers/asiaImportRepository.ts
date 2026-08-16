@@ -561,7 +561,7 @@ export async function upsertAsiaSupplierProducts(
     const externalId = productExternalId(product);
     const supplierProductId = `asia-${externalId}`;
     const stockAvailable = productStock(product) ?? 0;
-    const suggestedPriceAmountInCents = productPrice(product) ?? null;
+    const unitCostAmountInCents = productPrice(product) ?? null;
 
     await pool.query(
       `
@@ -574,6 +574,7 @@ export async function upsertAsiaSupplierProducts(
           raw_description,
           raw_category,
           raw_image_urls,
+          cost_amount_in_cents,
           suggested_price_amount_in_cents,
           stock_available,
           last_imported_at,
@@ -590,6 +591,7 @@ export async function upsertAsiaSupplierProducts(
           $7,
           $8,
           $9,
+          $9,
           $10,
           now(),
           'pending_review',
@@ -601,6 +603,7 @@ export async function upsertAsiaSupplierProducts(
           raw_description = EXCLUDED.raw_description,
           raw_category = EXCLUDED.raw_category,
           raw_image_urls = EXCLUDED.raw_image_urls,
+          cost_amount_in_cents = EXCLUDED.cost_amount_in_cents,
           suggested_price_amount_in_cents = EXCLUDED.suggested_price_amount_in_cents,
           stock_available = EXCLUDED.stock_available,
           last_imported_at = now(),
@@ -616,7 +619,7 @@ export async function upsertAsiaSupplierProducts(
         product.descricao ?? null,
         productCategory(product),
         productImages(product),
-        suggestedPriceAmountInCents,
+        unitCostAmountInCents,
         stockAvailable,
         JSON.stringify(product),
       ],
@@ -1035,36 +1038,66 @@ export async function syncCatalogProductFromAsiaImport(
   return catalogProductId;
 }
 
-export async function syncAllCatalogProductsFromAsiaImport() {
-  const pool = getDatabasePool();
-  const linkedProductsResult = await pool.query<{ id: string }>(
-    `
-      SELECT product.id
-      FROM scx_catalog_products product
-      INNER JOIN scx_catalog_supplier_products sp
-        ON sp.id = product.supplier_product_id
-      WHERE sp.supplier_id = $1
-      ORDER BY product.updated_at DESC, product.title ASC
-    `,
-    [supplierId],
-  );
+export async function syncCatalogProductsFromAsiaImportPage(page = 1) {
   let syncedCount = 0;
   const errors: string[] = [];
+  const safePage = Math.max(1, Math.round(page));
+  const response = await listAsiaImportProducts({ pagina: safePage, porPagina: 10, status: "all" });
+  const products = response.produtos ?? [];
 
-  for (const row of linkedProductsResult.rows) {
+  for (const product of products) {
     try {
-      await syncCatalogProductFromAsiaImport(row.id);
+      await upsertAsiaSupplierProducts([product], { ensureCatalogProduct: true });
       syncedCount += 1;
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : "Erro desconhecido.");
+      const reference = productExternalId(product);
+      const message = error instanceof Error ? error.message : "Erro desconhecido.";
+      errors.push(`${reference}: ${message}`);
     }
   }
 
   return {
-    totalCount: linkedProductsResult.rowCount ?? linkedProductsResult.rows.length,
+    page: Math.max(1, Number(response.pagina ?? safePage)),
+    totalPages: Math.max(1, Number(response.total_paginas ?? safePage)),
+    totalCount: Math.max(Number(response.total_produtos ?? 0), syncedCount + errors.length),
     syncedCount,
     errorCount: errors.length,
+    errors,
   };
+}
+
+export async function listAsiaImportSyncFailures() {
+  const { rows } = await getDatabasePool().query<{ external_id: string; raw_payload: AsiaImportProduct }>(
+    `SELECT external_id, raw_payload
+       FROM scx_catalog_supplier_products
+      WHERE supplier_id=$1 AND import_status='sync_error'
+      ORDER BY updated_at DESC, external_id ASC`,
+    [supplierId],
+  );
+
+  return rows.map((row) => {
+    const reasons = automaticCatalogBlockReasons(row.raw_payload ?? {});
+    return `${row.external_id}: ${reasons.length ? `Produto bloqueado: ${reasons.join(", ")}.` : "Falha de sincronizacao pendente de nova tentativa."}`;
+  });
+}
+
+export async function syncAllCatalogProductsFromAsiaImport() {
+  let page = 1;
+  let totalPages = 1;
+  let totalCount = 0;
+  let syncedCount = 0;
+  const errors: string[] = [];
+
+  do {
+    const result = await syncCatalogProductsFromAsiaImportPage(page);
+    totalPages = result.totalPages;
+    totalCount = result.totalCount;
+    syncedCount += result.syncedCount;
+    errors.push(...result.errors);
+    page += 1;
+  } while (page <= totalPages);
+
+  return { totalCount, syncedCount, errorCount: errors.length, errors };
 }
 
 export async function syncCatalogProductsFromAsiaImportBatch(
