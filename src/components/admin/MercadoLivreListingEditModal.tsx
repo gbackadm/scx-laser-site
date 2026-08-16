@@ -3,6 +3,8 @@
 import { ArrowLeft, ArrowRight, Check, LoaderCircle, Star, X } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 
+import { AiEnhanceButton } from "@/components/admin/AiEnhanceButton";
+import { DEFAULT_MANUFACTURING_TIME_DAYS } from "@/domain/mercadoLivre/manufacturingTime.js";
 import type { MercadoLivreListingEditor } from "@/domain/mercadoLivre/listingsRepository";
 
 type Props = {
@@ -18,6 +20,8 @@ export function MercadoLivreListingEditModal({ itemId, onClose, onSaved }: Props
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
   const [description, setDescription] = useState("");
+  const [usesManufacturingTime, setUsesManufacturingTime] = useState(false);
+  const [manufacturingTimeDays, setManufacturingTimeDays] = useState(String(DEFAULT_MANUFACTURING_TIME_DAYS));
   const [pictures, setPictures] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, startSaving] = useTransition();
@@ -34,6 +38,8 @@ export function MercadoLivreListingEditModal({ itemId, onClose, onSaved }: Props
         setTitle(next.title);
         setPrice(String(next.price).replace(".", ","));
         setDescription(next.description);
+        setUsesManufacturingTime(next.manufacturingTimeDays !== null);
+        setManufacturingTimeDays(String(next.manufacturingTimeDays ?? DEFAULT_MANUFACTURING_TIME_DAYS));
         setPictures(next.pictureSources);
       })
       .catch((reason) => {
@@ -73,6 +79,7 @@ export function MercadoLivreListingEditModal({ itemId, onClose, onSaved }: Props
             title,
             price: Number(price.replace(",", ".")),
             description,
+            manufacturingTimeDays: usesManufacturingTime ? Number(manufacturingTimeDays) : null,
             pictureSources: pictures,
           }),
         });
@@ -99,18 +106,29 @@ export function MercadoLivreListingEditModal({ itemId, onClose, onSaved }: Props
         {editor ? (
           <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
             <div className="grid content-start gap-4">
-              <label className="grid gap-2 text-sm font-bold">Titulo
-                <input value={title} maxLength={60} disabled={!editor.titleEditable} onChange={(event) => setTitle(event.target.value)} className={`${fieldClass} h-11`} />
+              <div className="grid gap-2 text-sm font-bold">
+                <div className="flex flex-wrap items-center justify-between gap-2"><label htmlFor="ml-listing-title">Titulo</label><AiEnhanceButton /></div>
+                <input id="ml-listing-title" value={title} maxLength={60} disabled={!editor.titleEditable} onChange={(event) => setTitle(event.target.value)} className={`${fieldClass} h-11`} />
                 <span className="flex justify-between gap-3 text-xs font-medium text-zinc-500"><span>{editor.titleEditable ? "Pode ser alterado porque este anuncio ainda nao teve vendas." : `Bloqueado pelo ML: ${editor.soldQuantity} venda(s).`}</span><span>{title.length}/60</span></span>
-              </label>
+              </div>
               <label className="grid gap-2 text-sm font-bold">Preco do kit
                 <input value={price} inputMode="decimal" onChange={(event) => setPrice(event.target.value)} className={`${fieldClass} h-11`} />
                 <span className="text-xs font-medium text-zinc-500">O estoque continua sendo controlado automaticamente pelo catalogo.</span>
               </label>
-              <label className="grid gap-2 text-sm font-bold">Descricao
-                <textarea value={description} maxLength={5000} rows={12} onChange={(event) => setDescription(event.target.value)} className={`${fieldClass} resize-y py-3 leading-6`} />
+              <fieldset disabled={!editor.manufacturingTimeSupported} className="rounded border border-white/15 p-3 disabled:opacity-50">
+                <legend className="px-1 text-sm font-bold">Prazo de producao</legend>
+                <div className="flex items-center gap-3">
+                  <label className="inline-flex items-center gap-2 text-xs font-black"><input type="checkbox" checked={usesManufacturingTime} onChange={(event) => setUsesManufacturingTime(event.target.checked)} className="h-4 w-4 accent-red-600"/> Usar</label>
+                  <input type="number" min={1} max={60} value={manufacturingTimeDays} disabled={!usesManufacturingTime || !editor.manufacturingTimeSupported} onChange={(event) => setManufacturingTimeDays(event.target.value)} aria-label="Dias para producao" className={`${fieldClass} h-10 w-20`} />
+                  <span className="text-xs font-medium text-zinc-500">dias</span>
+                </div>
+                <p className="mt-2 text-xs font-medium text-zinc-500">{editor.manufacturingTimeSupported ? "Use somente quando o pedido exigir preparacao ou personalizacao." : "Esta categoria nao aceita prazo de producao."}</p>
+              </fieldset>
+              <div className="grid gap-2 text-sm font-bold">
+                <div className="flex flex-wrap items-center justify-between gap-2"><label htmlFor="ml-listing-description">Descricao</label><AiEnhanceButton /></div>
+                <textarea id="ml-listing-description" value={description} maxLength={5000} rows={12} onChange={(event) => setDescription(event.target.value)} className={`${fieldClass} resize-y py-3 leading-6`} />
                 <span className="text-right text-xs font-medium text-zinc-500">{description.length}/5.000</span>
-              </label>
+              </div>
             </div>
 
             <div className="min-w-0">

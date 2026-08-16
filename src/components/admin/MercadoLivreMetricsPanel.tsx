@@ -1,14 +1,17 @@
 "use client";
 
 import { AlertTriangle, CircleHelp, DollarSign, ExternalLink, Eye, Percent, Search, ShoppingBag, TrendingUp } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import type { MercadoLivreMetrics } from "@/domain/mercadoLivre/listingsRepository";
+import { MercadoLivreReputationPanel } from "@/components/admin/MercadoLivreReputationPanel";
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const integer = new Intl.NumberFormat("pt-BR");
 
 const statusLabels: Record<string, string> = { active: "Ativo", paused: "Pausado", closed: "Encerrado", under_review: "Em revisao" };
+const periods = [7, 30, 60, 90, 150];
 
 type SortKey = "visits" | "sales" | "revenue" | "conversion" | "stock";
 
@@ -41,20 +44,27 @@ export function MercadoLivreMetricsPanel({ metrics }: { metrics: MercadoLivreMet
     { label: "Pedidos pagos", value: integer.format(metrics.totals.orders), detail: `${integer.format(metrics.totals.soldUnits)} unidade(s)`, icon: ShoppingBag },
     { label: "Conversao", value: percentage(metrics.totals.conversionRate), detail: "Unidades vendidas / visitas", icon: Percent },
     { label: "Vendas brutas", value: money.format(metrics.totals.grossRevenue), detail: `Apos comissao: ${money.format(afterFees)}`, icon: DollarSign },
-    { label: "Anuncios ativos", value: `${metrics.totals.active}/${metrics.totals.listings}`, detail: `${metrics.totals.paused} pausado(s)`, icon: TrendingUp },
-    { label: "Atencao", value: integer.format(metrics.totals.lowStock), detail: `Estoque baixo ou zerado`, icon: AlertTriangle },
+    { label: "Anuncios ativos agora", value: `${metrics.totals.active}/${metrics.totals.listings}`, detail: `${metrics.totals.paused} pausado(s) · estado atual`, icon: TrendingUp },
+    { label: "Estoque agora", value: integer.format(metrics.totals.lowStock), detail: `Baixo ou zerado · estado atual`, icon: AlertTriangle },
   ];
 
   return (
     <section>
-      <div className="flex flex-col gap-2 border-b border-white/10 pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div><h2 className="text-xl font-black">Desempenho dos anuncios</h2><p className="mt-1 text-sm text-zinc-500">De {new Date(`${metrics.dateFrom}T12:00:00`).toLocaleDateString("pt-BR")} a {new Date(`${metrics.dateTo}T12:00:00`).toLocaleDateString("pt-BR")}</p></div>
-        <p className={`inline-flex items-center gap-2 text-sm font-black ${metrics.totals.unansweredQuestions ? "text-amber-300" : "text-emerald-300"}`}><CircleHelp size={17} /> {metrics.totals.unansweredQuestions === null ? "Perguntas indisponiveis" : `${metrics.totals.unansweredQuestions} pergunta(s) aguardando resposta`}</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex w-fit max-w-full overflow-x-auto rounded border border-white/15 p-1" aria-label="Periodo das metricas">
+            {periods.map((period) => <Link key={period} href={`/admin/mercado-livre?aba=metricas&periodo=${period}#painel-ml`} aria-current={metrics.periodDays === period ? "page" : undefined} className={`inline-flex min-h-9 shrink-0 items-center justify-center rounded px-3 text-xs font-black transition ${metrics.periodDays === period ? "bg-laser text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-100"}`}>{period}d</Link>)}
+          </div>
+          <p className={`inline-flex items-center gap-2 text-sm font-black ${metrics.totals.unansweredQuestions ? "text-amber-300" : "text-emerald-300"}`}><CircleHelp size={17} /> {metrics.totals.unansweredQuestions === null ? "Perguntas indisponiveis" : `${metrics.totals.unansweredQuestions} pergunta(s) aguardando resposta`}</p>
+        </div>
       </div>
 
       <div className="grid border-b border-white/10 sm:grid-cols-2 xl:grid-cols-6">
         {summary.map(({ label, value, detail, icon: Icon }, index) => <div key={label} className={`px-1 py-5 sm:px-4 ${index < summary.length - 1 ? "xl:border-r xl:border-white/10" : ""}`}><Icon size={17} className="text-zinc-500" /><p className="mt-3 text-xs font-bold uppercase text-zinc-500">{label}</p><p className="mt-1 text-xl font-black text-zinc-100">{value}</p><p className="mt-1 text-xs text-zinc-500">{detail}</p></div>)}
       </div>
+
+      <MercadoLivreReputationPanel reputation={metrics.reputation} />
 
       <div className="border-b border-white/10 py-6">
         <div className="flex items-end justify-between gap-4"><div><h3 className="text-sm font-black">Visitas por dia</h3><p className="mt-1 text-xs text-zinc-500">O volume diario ajuda a separar falta de trafego de falta de conversao.</p></div><span className="text-xs font-black text-zinc-500">Pico: {integer.format(maxVisits)}</span></div>
@@ -62,6 +72,14 @@ export function MercadoLivreMetricsPanel({ metrics }: { metrics: MercadoLivreMet
           {metrics.daily.map((day) => <div key={day.date} className="group relative flex h-full min-w-0 flex-1 items-end" title={`${new Date(`${day.date}T12:00:00`).toLocaleDateString("pt-BR")}: ${day.visits} visitas, ${day.soldUnits} unidades`}><div className={`w-full bg-sky-500 transition group-hover:bg-sky-300 ${day.visits === 0 ? "min-h-px opacity-25" : ""}`} style={{ height: `${Math.max(day.visits === 0 ? 0.5 : 4, (day.visits / maxVisits) * 100)}%` }} /></div>)}
         </div>
         <div className="mt-2 flex justify-between text-[10px] font-bold text-zinc-500"><span>{new Date(`${metrics.dateFrom}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</span><span>{new Date(`${metrics.dateTo}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</span></div>
+      </div>
+
+      <div className="grid border-b border-white/10 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="py-5 sm:px-4 sm:first:pl-1 lg:border-r lg:border-white/10"><p className="text-xs font-bold uppercase text-zinc-500">Vendas brutas</p><p className="mt-2 text-lg font-black">{money.format(metrics.totals.grossRevenue)}</p></div>
+        <div className="py-5 sm:px-4 lg:border-r lg:border-white/10"><p className="text-xs font-bold uppercase text-zinc-500">Comissao ML</p><p className="mt-2 text-lg font-black text-red-300">-{money.format(metrics.totals.saleFees)}</p></div>
+        <div className="py-5 sm:px-4 lg:border-r lg:border-white/10"><p className="text-xs font-bold uppercase text-zinc-500">Custo dos produtos</p><p className="mt-2 text-lg font-black text-red-300">-{money.format(metrics.totals.costOfGoods)}</p></div>
+        <div className="py-5 sm:px-4"><p className="text-xs font-bold uppercase text-zinc-500">Margem conhecida</p><p className="mt-2 text-lg font-black text-emerald-300">{money.format(metrics.totals.knownContribution)} · {percentage(metrics.totals.knownContributionMargin)}</p></div>
+        <p className="pb-5 text-xs leading-5 text-zinc-500 sm:col-span-2 lg:col-span-4">Margem conhecida desconta comissao e custo cadastrado dos produtos. Frete, impostos e despesas operacionais ainda nao estao incluidos.{metrics.totals.listingsWithoutCost ? ` ${metrics.totals.listingsWithoutCost} anuncio(s) com venda nao possuem custo confiavel.` : ""}</p>
       </div>
 
       {metrics.totals.visitsUnavailable ? <p className="border-b border-amber-300/20 py-3 text-xs font-bold text-amber-200">O Mercado Livre nao retornou visitas para {metrics.totals.visitsUnavailable} anuncio(s). Eles aparecem com -- e nao entram nos totais.</p> : null}
@@ -73,9 +91,9 @@ export function MercadoLivreMetricsPanel({ metrics }: { metrics: MercadoLivreMet
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[960px] text-left text-sm">
-          <thead className="border-b border-white/10 text-xs uppercase text-zinc-500"><tr><th className="px-3 py-3">Anuncio</th><th className="px-3 py-3">Visitas</th><th className="px-3 py-3">Vendas</th><th className="px-3 py-3">Conversao</th><th className="px-3 py-3">Faturamento</th><th className="px-3 py-3">Comissao</th><th className="px-3 py-3">Estoque</th><th className="px-3 py-3">Status</th></tr></thead>
-          <tbody className="divide-y divide-white/5">{rows.map((item) => <tr key={item.itemId} className="hover:bg-white/[0.03]"><td className="px-3 py-3"><div className="flex items-center gap-3">{item.imageUrl ? <img src={item.imageUrl} alt="" className="h-11 w-11 shrink-0 rounded border border-white/10 bg-white object-contain" /> : null}<div className="min-w-0"><p className="max-w-sm truncate font-black">{item.title}</p><p className="mt-1 text-xs text-zinc-500">{item.itemId}</p></div>{item.permalink ? <a href={item.permalink} target="_blank" rel="noreferrer" title="Abrir anuncio" className="ml-auto rounded p-2 text-zinc-500 hover:text-white"><ExternalLink size={15} /></a> : null}</div></td><td className="px-3 py-3 font-black">{item.visits === null ? "--" : integer.format(item.visits)}</td><td className="px-3 py-3"><span className="font-black">{integer.format(item.soldUnits)}</span><p className="mt-1 text-[11px] text-zinc-500">Historico: {integer.format(item.lifetimeSoldUnits)}</p></td><td className="px-3 py-3 font-black">{percentage(item.conversionRate)}</td><td className="px-3 py-3 font-black">{money.format(item.grossRevenue)}</td><td className="px-3 py-3 text-zinc-400">{money.format(item.saleFees)}</td><td className={`px-3 py-3 font-black ${item.stockStatus === "ok" ? "" : "text-red-300"}`}>{integer.format(item.availableQuantity)}</td><td className="px-3 py-3"><span className={`rounded px-2 py-1 text-xs font-black ${item.status === "active" ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"}`}>{statusLabels[item.status] ?? item.status}</span></td></tr>)}</tbody>
+        <table className="w-full min-w-[1120px] text-left text-sm">
+          <thead className="border-b border-white/10 text-xs uppercase text-zinc-500"><tr><th className="px-3 py-3">Anuncio</th><th className="px-3 py-3">Visitas</th><th className="px-3 py-3">Vendas</th><th className="px-3 py-3">Conversao</th><th className="px-3 py-3">Faturamento</th><th className="px-3 py-3">Comissao</th><th className="px-3 py-3">Custo</th><th className="px-3 py-3">Margem</th><th className="px-3 py-3">Estoque</th><th className="px-3 py-3">Status</th></tr></thead>
+          <tbody className="divide-y divide-white/5">{rows.map((item) => <tr key={item.itemId} className="hover:bg-white/[0.03]"><td className="px-3 py-3"><div className="flex items-center gap-3">{item.imageUrl ? <img src={item.imageUrl} alt="" className="h-11 w-11 shrink-0 rounded border border-white/10 bg-white object-contain" /> : null}<div className="min-w-0"><p className="max-w-sm truncate font-black">{item.title}</p><p className="mt-1 text-xs text-zinc-500">{item.itemId}</p></div>{item.permalink ? <a href={item.permalink} target="_blank" rel="noreferrer" title="Abrir anuncio" className="ml-auto rounded p-2 text-zinc-500 hover:text-white"><ExternalLink size={15} /></a> : null}</div></td><td className="px-3 py-3 font-black">{item.visits === null ? "--" : integer.format(item.visits)}</td><td className="px-3 py-3"><span className="font-black">{integer.format(item.soldUnits)}</span><p className="mt-1 text-[11px] text-zinc-500">Historico: {integer.format(item.lifetimeSoldUnits)}</p></td><td className="px-3 py-3 font-black">{percentage(item.conversionRate)}</td><td className="px-3 py-3 font-black">{money.format(item.grossRevenue)}</td><td className="px-3 py-3 text-zinc-400">{money.format(item.saleFees)}</td><td className="px-3 py-3 text-zinc-400">{item.costOfGoods === null ? "--" : money.format(item.costOfGoods)}</td><td className={`px-3 py-3 font-black ${(item.knownContribution ?? 0) < 0 ? "text-red-300" : "text-emerald-300"}`}>{item.knownContribution === null ? "--" : <>{money.format(item.knownContribution)}<p className="mt-1 text-[11px] opacity-70">{percentage(item.knownContributionMargin)}</p></>}</td><td className={`px-3 py-3 font-black ${item.stockStatus === "ok" ? "" : "text-red-300"}`}>{integer.format(item.availableQuantity)}</td><td className="px-3 py-3"><span className={`rounded px-2 py-1 text-xs font-black ${item.status === "active" ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"}`}>{statusLabels[item.status] ?? item.status}</span></td></tr>)}</tbody>
         </table>
         {!rows.length ? <p className="py-10 text-center text-sm text-zinc-500">Nenhum anuncio corresponde aos filtros.</p> : null}
       </div>

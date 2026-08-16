@@ -194,6 +194,13 @@ html[data-admin-theme="light"] body {
   color: #991b1b !important;
 }
 
+.admin-shell[data-admin-theme="light"] .ai-enhance-button {
+  border-color: #c4b5fd !important;
+  background: #f5f3ff !important;
+  color: #6d28d9 !important;
+  opacity: 0.82;
+}
+
 .public-site {
   color-scheme: light;
   background: #f6f7f8 !important;

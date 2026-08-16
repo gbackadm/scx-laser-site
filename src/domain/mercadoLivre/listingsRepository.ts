@@ -4,6 +4,7 @@ import { getDatabasePool } from "@/domain/catalog/db";
 import { mercadoLivreRequest } from "@/domain/mercadoLivre/client";
 import { deletionRequiresClose } from "@/domain/mercadoLivre/listingLifecycle.js";
 import { inferListingGroupLabel, inferListingKitSize } from "@/domain/mercadoLivre/listingPresentation.js";
+import { manufacturingTimeDaysFrom, normalizeManufacturingTimeDays, withManufacturingTime } from "@/domain/mercadoLivre/manufacturingTime.js";
 import {
   getMercadoLivreConnection,
   markPendingMercadoLivreNotificationsProcessed,
@@ -68,6 +69,8 @@ type MercadoLivreItem = {
   seller_custom_field?: string;
   attributes?: Array<{ id?: string; name?: string; value_name?: string }>;
   sold_quantity?: number;
+  category_id?: string;
+  sale_terms?: Array<{ id?: string; value_id?: string | null; value_name?: string | null; value_struct?: { number?: number; unit?: string } }>;
   warnings?: Array<{ code?: string; message?: string }>;
 };
 
@@ -81,6 +84,8 @@ export type MercadoLivreListingEditor = {
   soldQuantity: number;
   price: number;
   description: string;
+  manufacturingTimeSupported: boolean;
+  manufacturingTimeDays: number | null;
   pictureSources: string[];
   mediaLibrary: Array<{ id: string; url: string; label: string; owner: "product" | "variant" }>;
 };
@@ -96,9 +101,34 @@ export type MercadoLivreListingMetric = {
   lifetimeSoldUnits: number;
   grossRevenue: number;
   saleFees: number;
+  costOfGoods: number | null;
+  knownContribution: number | null;
+  knownContributionMargin: number | null;
   conversionRate: number | null;
   availableQuantity: number;
+  localAvailableQuantity: number | null;
+  unitsPerPack: number | null;
+  pausedByStock: boolean;
+  syncError: string | null;
+  lastStockSyncAt: string | null;
   stockStatus: "ok" | "low" | "out";
+};
+
+export type MercadoLivreRecentOrder = {
+  id: string;
+  dateCreated: string | null;
+  totalAmount: number;
+  units: number;
+  titles: string[];
+};
+
+export type MercadoLivreUnansweredQuestion = {
+  id: string;
+  itemId: string;
+  itemTitle: string;
+  text: string;
+  dateCreated: string | null;
+  permalink: string | null;
 };
 
 export type MercadoLivreMetrics = {
@@ -116,11 +146,38 @@ export type MercadoLivreMetrics = {
     soldUnits: number;
     grossRevenue: number;
     saleFees: number;
+    costOfGoods: number;
+    knownContribution: number;
+    knownContributionMargin: number | null;
+    listingsWithoutCost: number;
     conversionRate: number | null;
     lowStock: number;
     unansweredQuestions: number | null;
   };
   daily: Array<{ date: string; visits: number; soldUnits: number; grossRevenue: number }>;
+  recentOrders: MercadoLivreRecentOrder[];
+  unansweredQuestions: MercadoLivreUnansweredQuestion[];
+  reputation: MercadoLivreReputation | null;
+};
+
+export type MercadoLivreReputation = {
+  levelId: string | null;
+  realLevel: string | null;
+  powerSellerStatus: string | null;
+  protectionEndDate: string | null;
+  transactions: {
+    period: string | null;
+    total: number;
+    completed: number;
+    canceled: number;
+    positiveRating: number | null;
+    neutralRating: number | null;
+    negativeRating: number | null;
+  };
+  sales: { period: string | null; completed: number };
+  claims: { period: string | null; rate: number; value: number };
+  delayedHandling: { period: string | null; rate: number; value: number };
+  cancellations: { period: string | null; rate: number; value: number };
 };
 
 type MultiGetResult = { code?: number; body?: MercadoLivreItem };
@@ -132,8 +189,9 @@ type ItemVisits = {
 type MercadoLivreOrder = {
   id?: number;
   date_created?: string;
+  total_amount?: number;
   order_items?: Array<{
-    item?: { id?: string };
+    item?: { id?: string; title?: string };
     quantity?: number;
     unit_price?: number;
     gross_price?: number;
@@ -141,7 +199,31 @@ type MercadoLivreOrder = {
   }>;
 };
 type OrdersSearch = { paging?: { total?: number }; results?: MercadoLivreOrder[] };
-type QuestionsSearch = { paging?: { total?: number } };
+type QuestionsSearch = {
+  paging?: { total?: number };
+  questions?: Array<{ id?: number; item_id?: string; text?: string; date_created?: string }>;
+};
+type MercadoLivreUser = {
+  seller_reputation?: {
+    level_id?: string;
+    real_level?: string;
+    power_seller_status?: string;
+    protection_end_date?: string;
+    transactions?: {
+      period?: string;
+      total?: number;
+      completed?: number;
+      canceled?: number;
+      ratings?: { positive?: number; neutral?: number; negative?: number };
+    };
+    metrics?: {
+      sales?: { period?: string; completed?: number };
+      claims?: { period?: string; rate?: number; value?: number };
+      delayed_handling_time?: { period?: string; rate?: number; value?: number };
+      cancellations?: { period?: string; rate?: number; value?: number };
+    };
+  };
+};
 type ItemPerformance = {
   score?: number;
   level_wording?: string;
@@ -252,8 +334,20 @@ export async function getMercadoLivreMetrics(periodDays = 30): Promise<MercadoLi
   }
   const connection = await getMercadoLivreConnection();
   if (!connection) throw new Error("Conta Mercado Livre nao conectada.");
-  const pricingRule = await getGlobalPricingRule();
-  const itemIds = await listAccountItemIds(connection.userId);
+  const [pricingRule, itemIds, userResponse] = await Promise.all([
+    getGlobalPricingRule(),
+    listAccountItemIds(connection.userId),
+    mercadoLivreRequest<MercadoLivreUser>(`/users/${connection.userId}?attributes=seller_reputation`),
+  ]);
+  const localOfferResult = await getDatabasePool().query(
+    `SELECT offer.external_id, offer.units_per_pack, offer.paused_by_stock,
+            offer.last_stock_sync_error, offer.last_stock_sync_at,
+            variant.cost_amount_in_cents, variant.stock_quantity
+       FROM scx_catalog_marketplace_offers offer
+       INNER JOIN scx_catalog_product_variants variant ON variant.id=offer.variant_id
+      WHERE offer.channel='mercado_livre' AND offer.external_id IS NOT NULL`,
+  );
+  const localOffers = new Map(localOfferResult.rows.map((row) => [String(row.external_id), row]));
   const items = new Map<string, MercadoLivreItem>();
   for (const batch of chunks(itemIds, 20)) {
     const query = new URLSearchParams({
@@ -295,7 +389,7 @@ export async function getMercadoLivreMetrics(periodDays = 30): Promise<MercadoLi
       await getDatabasePool().query(
         `INSERT INTO scx_mercado_livre_listing_metrics (item_id, period_days, total_visits, daily_visits, fetched_at)
          VALUES ($1,$2,$3,$4::jsonb,now())
-         ON CONFLICT (item_id) DO UPDATE SET period_days=EXCLUDED.period_days,
+         ON CONFLICT (item_id, period_days) DO UPDATE SET
            total_visits=EXCLUDED.total_visits, daily_visits=EXCLUDED.daily_visits, fetched_at=now()`,
         [itemId, periodDays, Number(result.total_visits ?? 0), JSON.stringify(result.results ?? [])],
       );
@@ -324,7 +418,7 @@ export async function getMercadoLivreMetrics(periodDays = 30): Promise<MercadoLi
     seller_id: connection.userId,
     status: "UNANSWERED",
     api_version: "4",
-    limit: "1",
+    limit: "10",
   });
   const questionsResponse = await mercadoLivreRequest<QuestionsSearch>(`/questions/search?${questionsQuery}`);
   const unansweredQuestions = questionsResponse.ok ? Number(questionsResponse.body?.paging?.total ?? 0) : null;
@@ -359,6 +453,13 @@ export async function getMercadoLivreMetrics(periodDays = 30): Promise<MercadoLi
     const itemVisits = visits.get(itemId);
     const totalVisits = itemVisits ? Number(itemVisits.total_visits ?? 0) : null;
     const sales = salesByItem.get(itemId) ?? { soldUnits: 0, grossRevenue: 0, saleFees: 0 };
+    const localOffer = localOffers.get(itemId);
+    const unitCostInCents = localOffer?.cost_amount_in_cents === null || localOffer?.cost_amount_in_cents === undefined
+      ? null : Number(localOffer.cost_amount_in_cents);
+    const unitsPerPack = localOffer ? Number(localOffer.units_per_pack) : null;
+    const costOfGoods = unitCostInCents === null || unitsPerPack === null
+      ? null : (unitCostInCents * unitsPerPack * sales.soldUnits) / 100;
+    const knownContribution = costOfGoods === null ? null : sales.grossRevenue - sales.saleFees - costOfGoods;
     const availableQuantity = Number(item.available_quantity ?? 0);
     return [{
       itemId,
@@ -371,8 +472,19 @@ export async function getMercadoLivreMetrics(periodDays = 30): Promise<MercadoLi
       lifetimeSoldUnits: Number(item.sold_quantity ?? 0),
       grossRevenue: sales.grossRevenue,
       saleFees: sales.saleFees,
+      costOfGoods,
+      knownContribution,
+      knownContributionMargin: knownContribution === null || sales.grossRevenue <= 0
+        ? null : (knownContribution / sales.grossRevenue) * 100,
       conversionRate: totalVisits && totalVisits > 0 ? (sales.soldUnits / totalVisits) * 100 : null,
       availableQuantity,
+      localAvailableQuantity: localOffer
+        ? Math.floor(Number(localOffer.stock_quantity ?? 0) / Math.max(1, Number(localOffer.units_per_pack ?? 1)))
+        : null,
+      unitsPerPack,
+      pausedByStock: localOffer?.paused_by_stock === true,
+      syncError: localOffer?.last_stock_sync_error ? String(localOffer.last_stock_sync_error) : null,
+      lastStockSyncAt: localOffer?.last_stock_sync_at ? new Date(localOffer.last_stock_sync_at).toISOString() : null,
       stockStatus: availableQuantity <= 0 ? "out" as const
         : availableQuantity < pricingRule.marketplaceLowStockWarningThreshold ? "low" as const : "ok" as const,
     }];
@@ -391,7 +503,56 @@ export async function getMercadoLivreMetrics(periodDays = 30): Promise<MercadoLi
     return { date: key, visits: dailyVisits.get(key) ?? 0, ...sales };
   });
   const totalVisits = listings.reduce((sum, item) => sum + (item.visits ?? 0), 0);
-  const soldUnits = listings.reduce((sum, item) => sum + item.soldUnits, 0);
+  const periodSales = [...salesByItem.entries()].map(([itemId, sales]) => {
+    const offer = localOffers.get(itemId);
+    const unitCostInCents = offer?.cost_amount_in_cents === null || offer?.cost_amount_in_cents === undefined
+      ? null : Number(offer.cost_amount_in_cents);
+    const unitsPerPack = offer ? Number(offer.units_per_pack) : null;
+    const costOfGoods = unitCostInCents === null || unitsPerPack === null
+      ? null : (unitCostInCents * unitsPerPack * sales.soldUnits) / 100;
+    return { ...sales, costOfGoods };
+  });
+  const soldUnits = periodSales.reduce((sum, sale) => sum + sale.soldUnits, 0);
+  const knownCostSales = periodSales.filter((sale) => sale.soldUnits > 0 && sale.costOfGoods !== null);
+  const knownRevenue = knownCostSales.reduce((sum, sale) => sum + sale.grossRevenue, 0);
+  const knownContribution = knownCostSales.reduce((sum, sale) => sum + sale.grossRevenue - sale.saleFees - (sale.costOfGoods ?? 0), 0);
+  const itemById = new Map(listings.map((item) => [item.itemId, item]));
+  const sellerReputation = userResponse.ok ? userResponse.body?.seller_reputation : null;
+  const reputationMetrics = sellerReputation?.metrics;
+  const reputation: MercadoLivreReputation | null = sellerReputation ? {
+    levelId: sellerReputation.level_id ?? null,
+    realLevel: sellerReputation.real_level ?? null,
+    powerSellerStatus: sellerReputation.power_seller_status ?? null,
+    protectionEndDate: sellerReputation.protection_end_date ?? null,
+    transactions: {
+      period: sellerReputation.transactions?.period ?? null,
+      total: Number(sellerReputation.transactions?.total ?? 0),
+      completed: Number(sellerReputation.transactions?.completed ?? 0),
+      canceled: Number(sellerReputation.transactions?.canceled ?? 0),
+      positiveRating: sellerReputation.transactions?.ratings?.positive === undefined ? null : Number(sellerReputation.transactions.ratings.positive),
+      neutralRating: sellerReputation.transactions?.ratings?.neutral === undefined ? null : Number(sellerReputation.transactions.ratings.neutral),
+      negativeRating: sellerReputation.transactions?.ratings?.negative === undefined ? null : Number(sellerReputation.transactions.ratings.negative),
+    },
+    sales: {
+      period: reputationMetrics?.sales?.period ?? null,
+      completed: Number(reputationMetrics?.sales?.completed ?? 0),
+    },
+    claims: {
+      period: reputationMetrics?.claims?.period ?? null,
+      rate: Number(reputationMetrics?.claims?.rate ?? 0),
+      value: Number(reputationMetrics?.claims?.value ?? 0),
+    },
+    delayedHandling: {
+      period: reputationMetrics?.delayed_handling_time?.period ?? null,
+      rate: Number(reputationMetrics?.delayed_handling_time?.rate ?? 0),
+      value: Number(reputationMetrics?.delayed_handling_time?.value ?? 0),
+    },
+    cancellations: {
+      period: reputationMetrics?.cancellations?.period ?? null,
+      rate: Number(reputationMetrics?.cancellations?.rate ?? 0),
+      value: Number(reputationMetrics?.cancellations?.value ?? 0),
+    },
+  } : null;
   const value: MercadoLivreMetrics = {
     periodDays,
     dateFrom,
@@ -405,13 +566,36 @@ export async function getMercadoLivreMetrics(periodDays = 30): Promise<MercadoLi
       visitsUnavailable: listings.filter((item) => item.visits === null).length,
       orders: new Set(orders.map((order) => order.id).filter(Boolean)).size,
       soldUnits,
-      grossRevenue: listings.reduce((sum, item) => sum + item.grossRevenue, 0),
-      saleFees: listings.reduce((sum, item) => sum + item.saleFees, 0),
+      grossRevenue: periodSales.reduce((sum, sale) => sum + sale.grossRevenue, 0),
+      saleFees: periodSales.reduce((sum, sale) => sum + sale.saleFees, 0),
+      costOfGoods: knownCostSales.reduce((sum, sale) => sum + (sale.costOfGoods ?? 0), 0),
+      knownContribution,
+      knownContributionMargin: knownRevenue > 0 ? (knownContribution / knownRevenue) * 100 : null,
+      listingsWithoutCost: periodSales.filter((sale) => sale.soldUnits > 0 && sale.costOfGoods === null).length,
       conversionRate: totalVisits > 0 ? (soldUnits / totalVisits) * 100 : null,
       lowStock: listings.filter((item) => item.stockStatus !== "ok").length,
       unansweredQuestions,
     },
     daily,
+    recentOrders: orders.slice(0, 8).map((order) => ({
+      id: String(order.id ?? ""),
+      dateCreated: order.date_created ?? null,
+      totalAmount: Number(order.total_amount ?? order.order_items?.reduce((sum, item) => sum + Number(item.gross_price ?? (Number(item.unit_price ?? 0) * Number(item.quantity ?? 0))), 0) ?? 0),
+      units: order.order_items?.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0) ?? 0,
+      titles: [...new Set(order.order_items?.map((item) => String(item.item?.title ?? itemById.get(String(item.item?.id ?? ""))?.title ?? "Produto")).filter(Boolean) ?? [])],
+    })),
+    unansweredQuestions: (questionsResponse.body?.questions ?? []).map((question) => {
+      const item = itemById.get(String(question.item_id ?? ""));
+      return {
+        id: String(question.id ?? ""),
+        itemId: String(question.item_id ?? ""),
+        itemTitle: item?.title ?? String(question.item_id ?? "Anuncio"),
+        text: String(question.text ?? "Pergunta sem texto disponivel"),
+        dateCreated: question.date_created ?? null,
+        permalink: item?.permalink ?? null,
+      };
+    }),
+    reputation,
   };
   metricsCache = { expiresAt: Date.now() + 10 * 60 * 1000, value };
   return value;
@@ -610,19 +794,25 @@ async function listingMediaLibrary(productId: string) {
 
 export async function getManagedMercadoLivreListingEditor(itemId: string): Promise<MercadoLivreListingEditor> {
   const { row, item } = await requireLinkedListing(itemId);
-  const [descriptionResponse, mediaLibrary, draft] = await Promise.all([
+  const [descriptionResponse, mediaLibrary, draft, saleTermsResponse] = await Promise.all([
     mercadoLivreRequest<MercadoLivreDescription>(`/items/${itemId}/description`),
     listingMediaLibrary(String(row.product_id)),
     getDatabasePool().query(
       `SELECT description FROM scx_mercado_livre_product_drafts WHERE product_id=$1 LIMIT 1`,
       [row.product_id],
     ),
+    item.category_id
+      ? mercadoLivreRequest<Array<{ id?: string }>>(`/categories/${item.category_id}/sale_terms`)
+      : Promise.resolve({ ok: false, status: 400, body: null }),
   ]);
   const livePictures = (item.pictures ?? [])
     .map((picture) => picture.secure_url ?? picture.url)
     .filter((url): url is string => typeof url === "string" && !url.includes("/processing-image/"));
   const availableUrls = new Set(mediaLibrary.map((asset) => asset.url));
   const selectedPictures = livePictures.filter((url) => availableUrls.has(url));
+  const manufacturingTimeSupported = saleTermsResponse.ok
+    && Array.isArray(saleTermsResponse.body)
+    && saleTermsResponse.body.some((term) => term.id === "MANUFACTURING_TIME");
   return {
     itemId,
     productId: String(row.product_id),
@@ -633,6 +823,8 @@ export async function getManagedMercadoLivreListingEditor(itemId: string): Promi
     description: descriptionResponse.ok
       ? String(descriptionResponse.body?.plain_text ?? "")
       : String(draft.rows[0]?.description ?? ""),
+    manufacturingTimeSupported,
+    manufacturingTimeDays: manufacturingTimeDaysFrom(item.sale_terms),
     pictureSources: selectedPictures.length >= 2 ? selectedPictures : mediaLibrary.slice(0, 2).map((asset) => asset.url),
     mediaLibrary,
   };
@@ -643,6 +835,7 @@ export async function updateManagedMercadoLivreListing(input: {
   title: string;
   price: number;
   description: string;
+  manufacturingTimeDays: number | null;
   pictureSources: string[];
 }) {
   const { row, item: current } = await requireLinkedListing(input.itemId);
@@ -656,6 +849,16 @@ export async function updateManagedMercadoLivreListing(input: {
   if (description.length < 80 || description.length > 5000) {
     throw new Error("A descricao deve ter entre 80 e 5.000 caracteres.");
   }
+  const manufacturingTimeDays = normalizeManufacturingTimeDays(input.manufacturingTimeDays);
+  const saleTermsResponse = current.category_id
+    ? await mercadoLivreRequest<Array<{ id?: string }>>(`/categories/${current.category_id}/sale_terms`)
+    : null;
+  const manufacturingTimeSupported = Boolean(saleTermsResponse?.ok
+    && Array.isArray(saleTermsResponse.body)
+    && saleTermsResponse.body.some((term) => term.id === "MANUFACTURING_TIME"));
+  if (manufacturingTimeDays !== null && !manufacturingTimeSupported) {
+    throw new Error("A categoria deste anuncio nao aceita prazo de producao.");
+  }
   const library = await listingMediaLibrary(String(row.product_id));
   const allowedUrls = new Set(library.map((asset) => asset.url));
   const pictureSources = [...new Set(input.pictureSources.map((url) => url.trim()).filter(Boolean))];
@@ -666,6 +869,11 @@ export async function updateManagedMercadoLivreListing(input: {
     price: Math.round(input.price * 100) / 100,
     pictures: pictureSources.map((source) => ({ source })),
   };
+  if (manufacturingTimeSupported) {
+    itemBody.sale_terms = manufacturingTimeDays === null
+      ? [{ id: "MANUFACTURING_TIME", value_id: null, value_name: null }]
+      : withManufacturingTime([], manufacturingTimeDays);
+  }
   if (title !== current.title) itemBody.title = title;
   const changed = await updateItem(input.itemId, itemBody);
   if (!changed.ok) throw new Error(apiError(changed.body, "Mercado Livre recusou as alteracoes do anuncio."));

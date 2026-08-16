@@ -1,9 +1,10 @@
-import { ArrowRight, BarChart3, CheckCircle2, KeyRound, ListChecks, PackagePlus, Radio } from "lucide-react";
+import { ArrowRight, BarChart3, CheckCircle2, KeyRound, ListChecks, PackagePlus, Radio, Siren } from "lucide-react";
 import Link from "next/link";
 
 import { MercadoLivrePublishPanel } from "@/components/admin/MercadoLivrePublishPanel";
 import { MercadoLivreListingsPanel } from "@/components/admin/MercadoLivreListingsPanel";
 import { MercadoLivreMetricsPanel } from "@/components/admin/MercadoLivreMetricsPanel";
+import { MercadoLivreOperationsPanel } from "@/components/admin/MercadoLivreOperationsPanel";
 import { AdminNotice } from "@/components/admin/AdminNotice";
 import { requireAdminSession } from "@/domain/auth/session";
 import { roleCan } from "@/domain/catalog/permissions";
@@ -22,8 +23,10 @@ export const metadata = { title: "Admin SCX Laser | Mercado Livre" };
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  searchParams?: Promise<{ conectado?: string; erro?: string; testada?: string; aba?: string; productId?: string }>;
+  searchParams?: Promise<{ conectado?: string; erro?: string; testada?: string; aba?: string; productId?: string; periodo?: string }>;
 };
+
+const metricPeriods = new Set([7, 30, 60, 90, 150]);
 
 function formatDate(value: string | null) {
   if (!value) return "Nao registrado";
@@ -61,19 +64,21 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
   );
   const expired = connection?.expiresAt ? new Date(connection.expiresAt) <= new Date() : false;
   const syncFailures = syncOverview.failedEvents + syncOverview.failedOffers;
-  const activeTab = params?.aba === "anuncios" ? "anuncios" : params?.aba === "metricas" ? "metricas" : "publicar";
+  const activeTab = params?.aba === "anuncios" ? "anuncios" : params?.aba === "metricas" ? "metricas" : params?.aba === "operacao" ? "operacao" : "publicar";
+  const requestedPeriod = Number(params?.periodo ?? 30);
+  const metricPeriod = activeTab === "metricas" && metricPeriods.has(requestedPeriod) ? requestedPeriod : 30;
   const requestedProduct = candidates.find((candidate) => candidate.id === params?.productId);
   const pilot = requestedProduct ?? candidates.find((candidate) => candidate.profileStatus === "reviewed") ?? candidates[0];
   const canPublish = Boolean(connection && roleCan(session.role, "catalog:publish"));
   const [initialDraft, listings, metrics] = await Promise.all([
     activeTab === "publicar" && pilot ? getMercadoLivreDraft(pilot.id) : null,
     activeTab === "anuncios" && canPublish ? listManagedMercadoLivreListings() : [],
-    activeTab === "metricas" && canPublish ? getMercadoLivreMetrics() : null,
+    (activeTab === "metricas" || activeTab === "operacao") && canPublish ? getMercadoLivreMetrics(metricPeriod) : null,
   ]);
 
   return (
-    <main className="min-h-screen bg-[#050606] px-4 py-6 text-white sm:px-8 lg:px-10 lg:py-8">
-      <div className="mx-auto max-w-7xl">
+    <main className="min-h-screen min-w-0 bg-[#050606] px-4 py-6 text-white sm:px-8 lg:px-10 lg:py-8">
+      <div className="mx-auto min-w-0 max-w-7xl">
         <div className="flex flex-col gap-4 border-b border-white/10 pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-black uppercase text-laser">Marketplace direto</p>
@@ -87,6 +92,7 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
               {connection ? (
                 <Link
                   href="/admin/api/mercado-livre/conexao"
+                  prefetch={false}
                   className="inline-flex min-h-11 items-center justify-center rounded border border-white/15 px-4 text-sm font-black text-zinc-200 transition hover:border-white/30 hover:text-white"
                 >
                   Testar conexao
@@ -94,6 +100,7 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
               ) : null}
               <Link
                 href="/admin/api/mercado-livre/oauth/connect"
+                prefetch={false}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded bg-laser px-4 text-sm font-black text-white transition hover:bg-red-600"
               >
                 {connection ? "Reconectar conta" : "Conectar conta"}
@@ -162,10 +169,11 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
         </section>
         {canPublish ? (
           <>
-            <nav id="painel-ml" className="mb-7 flex scroll-mt-4 gap-1 overflow-x-auto border-b border-white/10" aria-label="Mercado Livre">
+            <nav id="painel-ml" className="mb-7 flex w-full max-w-full scroll-mt-4 gap-1 overflow-x-auto border-b border-white/10" aria-label="Mercado Livre">
               <Link href="/admin/mercado-livre#painel-ml" className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "publicar" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><PackagePlus size={17} /> Preparar publicacao</Link>
               <Link href="/admin/mercado-livre?aba=anuncios#painel-ml" className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "anuncios" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><ListChecks size={17} /> Anuncios publicados</Link>
               <Link href="/admin/mercado-livre?aba=metricas#painel-ml" className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "metricas" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><BarChart3 size={17} /> Metricas</Link>
+              <Link href="/admin/mercado-livre?aba=operacao#painel-ml" className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-black transition ${activeTab === "operacao" ? "border-laser text-white" : "border-transparent text-zinc-500 hover:text-zinc-200"}`}><Siren size={17} /> Operacao</Link>
             </nav>
             {activeTab === "publicar" ? (
               <MercadoLivrePublishPanel candidates={candidates} initialDraft={initialDraft} initialProductId={pilot?.id} commercialRules={{
@@ -176,7 +184,7 @@ export default async function MercadoLivrePage({ searchParams }: PageProps) {
                 taxReservePercentage: pricingRule.marketplaceTaxReservePercentage,
                 lowStockWarningThreshold: pricingRule.marketplaceLowStockWarningThreshold,
               }} />
-            ) : activeTab === "anuncios" ? <MercadoLivreListingsPanel listings={listings} /> : metrics ? <MercadoLivreMetricsPanel metrics={metrics} /> : null}
+            ) : activeTab === "anuncios" ? <MercadoLivreListingsPanel listings={listings} /> : activeTab === "operacao" && metrics ? <MercadoLivreOperationsPanel metrics={metrics} syncOverview={syncOverview} /> : metrics ? <MercadoLivreMetricsPanel metrics={metrics} /> : null}
           </>
         ) : null}
       </div>

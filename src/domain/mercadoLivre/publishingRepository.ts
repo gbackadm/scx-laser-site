@@ -23,6 +23,11 @@ import {
   evaluateListingContent,
   extractYoutubeVideoId,
 } from "@/domain/mercadoLivre/listingQuality.js";
+import {
+  DEFAULT_MANUFACTURING_TIME_DAYS,
+  normalizeManufacturingTimeDays,
+  withManufacturingTime,
+} from "@/domain/mercadoLivre/manufacturingTime.js";
 import { confirmedMasterPack, confirmedUnitPack } from "@/domain/mercadoLivre/packageSource.js";
 import {
   applyEditableAttributes,
@@ -276,6 +281,8 @@ export type MercadoLivreDraftPayload = {
   unitPriceInCents: number;
   productCostInCents: number;
   description: string;
+  manufacturingTimeSupported?: boolean;
+  manufacturingTimeEnabled?: boolean;
   selectedForPublishing?: boolean;
   editableAttributes?: EditableAttributeDefinition[];
   readinessErrors?: string[];
@@ -657,9 +664,10 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
     if (errors.length) throw new Error(errors.join(" "));
     generated = buildPenUserProductPayloads(penSource);
   } else {
-    const [categoryAttributes, categoryDetailsResponse] = await Promise.all([
+    const [categoryAttributes, categoryDetailsResponse, saleTermsResponse] = await Promise.all([
       getMercadoLivreCategoryAttributes(profile.category_id),
       mercadoLivreRequest<{ settings?: { max_pictures_per_item?: number } }>(`/categories/${profile.category_id}`),
+      mercadoLivreRequest<Array<{ id?: string }>>(`/categories/${profile.category_id}/sale_terms`),
     ]);
     if (!categoryDetailsResponse.ok) {
       throw new Error("Nao foi possivel consultar as regras atuais da categoria Mercado Livre.");
@@ -711,6 +719,9 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
       packQuantities: packs.map((pack) => pack.unitsPerPack),
       attributeMappings,
     };
+    const manufacturingTimeSupported = saleTermsResponse.ok
+      && Array.isArray(saleTermsResponse.body)
+      && saleTermsResponse.body.some((term) => term.id === "MANUFACTURING_TIME");
     const variationTargetIds = new Set(attributeMappings
       .filter((mapping) => mapping.source === "variantAttribute" && variationAxes.includes(mapping.sourceKey ?? ""))
       .map((mapping) => mapping.targetId));
@@ -757,6 +768,8 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
         );
         return {
           ...payload,
+          manufacturingTimeSupported,
+          manufacturingTimeEnabled: manufacturingTimeSupported,
           editableAttributes,
           package: { ...payload.package, warning: payload.package.warning ?? null },
           color: payload.variationIdentity,
@@ -768,7 +781,13 @@ export async function generateMercadoLivreDraft(productId: string, actorUserId: 
             payload.unitsPerPack,
             payload.variationIdentity,
           ),
-          body: { ...payload.body, attributes: attributeResult.attributes },
+          body: {
+            ...payload.body,
+            attributes: attributeResult.attributes,
+            ...(manufacturingTimeSupported
+              ? { sale_terms: withManufacturingTime([], DEFAULT_MANUFACTURING_TIME_DAYS) }
+              : {}),
+          },
           financialStatus: payload.publishable ? "healthy" as const : "blocked" as const,
           readinessErrors,
         };
@@ -1099,6 +1118,7 @@ export async function editMercadoLivreDraft(input: {
   familyName: string;
   description: string;
   listingTypeId: "gold_special" | "gold_pro";
+  manufacturingTimeDays: number | null;
   offers: DraftOfferEdit[];
 }) {
   const draft = await getMercadoLivreDraft(input.productId);
@@ -1108,11 +1128,15 @@ export async function editMercadoLivreDraft(input: {
   if (familyName.length < 15 || familyName.length > 60) throw new Error("O titulo deve ter entre 15 e 60 caracteres.");
   if (description.length < 80 || description.length > 5000) throw new Error("A descricao deve ter entre 80 e 5.000 caracteres.");
   if (!["gold_special", "gold_pro"].includes(input.listingTypeId)) throw new Error("Modalidade de anuncio invalida.");
+  const manufacturingTimeDays = normalizeManufacturingTimeDays(input.manufacturingTimeDays);
   const family = draft.payloads.filter((payload) =>
     payload.unitsPerPack === input.unitsPerPack
     && Number((payload.body as { available_quantity?: number }).available_quantity ?? 0) > 0
   );
   if (!family.length) throw new Error("O tamanho de kit escolhido nao existe.");
+  if (manufacturingTimeDays !== null && family.some((payload) => payload.manufacturingTimeSupported === false)) {
+    throw new Error("A categoria escolhida nao aceita prazo de producao.");
+  }
   const edits = new Map(input.offers.map((item) => [item.offerId, item]));
   if (family.some((payload) => !edits.has(payload.offerId))) throw new Error("As opcoes de variacao chegaram incompletas.");
   if (![...edits.values()].some((item) => item.selected)) throw new Error("Selecione ao menos uma variacao.");
@@ -1156,6 +1180,7 @@ export async function editMercadoLivreDraft(input: {
     return {
       ...payload,
       package: nextPackage,
+      manufacturingTimeEnabled: manufacturingTimeDays !== null,
       selectedForPublishing: edit.selected,
       description,
       body: {
@@ -1165,6 +1190,12 @@ export async function editMercadoLivreDraft(input: {
         price: Math.round(edit.price * 100) / 100,
         pictures: pictureSources.map((source) => ({ source })),
         attributes: withPackageAttributes(attributeResult.attributes, nextPackage),
+        ...(payload.manufacturingTimeSupported === false ? {} : {
+          sale_terms: withManufacturingTime(
+            (payload.body as { sale_terms?: unknown }).sale_terms,
+            manufacturingTimeDays,
+          ),
+        }),
       },
     };
   });

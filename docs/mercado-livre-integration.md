@@ -99,6 +99,20 @@ A aba `Metricas` consulta a janela movel dos ultimos 30 dias e apresenta:
 - anuncios ativos, pausados, estoque baixo ou zerado;
 - perguntas ainda sem resposta;
 - busca, filtros, ordenacao e atalho para o anuncio publicado.
+- saude atual da conta: termometro de reputacao, MercadoLider, vendas concluidas,
+  reclamacoes, atrasos de despacho, cancelamentos e avaliacoes positivas.
+
+O periodo pode ser alternado entre 7, 30, 60, 90 e 150 dias. A escolha fica na
+URL e cada janela possui cache independente, evitando novas chamadas ao voltar
+para um periodo consultado recentemente. A aba `Operacao` permanece fixa em 30
+dias para manter uma referencia operacional consistente.
+
+Pedidos, unidades, faturamento e comissao incluem todos os pedidos pagos da
+janela, inclusive vendas de anuncios antigos que ja nao aparecem na listagem
+atual da conta. Quantidade de anuncios ativos e alertas de estoque representam
+o estado atual e, por isso, nao mudam quando o periodo historico e alterado.
+Os indicadores de reputacao usam o periodo oficial devolvido pelo ML, que pode
+ser diferente da janela escolhida para visitas e pedidos.
 
 As visitas sao armazenadas por 10 minutos em
 `scx_mercado_livre_listing_metrics`. Esse cache persiste entre reinicios e
@@ -106,6 +120,44 @@ deploys, evita dezenas de chamadas repetidas e sinaliza leituras indisponiveis
 em vez de transforma-las silenciosamente em zero. O comando
 `npm run mercado-livre:check-metrics` valida a tabela e a ultima leitura antes
 de um deploy.
+
+## Central de operacao
+
+A aba `Operacao` transforma dados do canal em uma fila priorizada. Ela centraliza:
+
+- perguntas ainda sem resposta;
+- vendas pagas recentes;
+- anuncios sem estoque ou abaixo do limite configurado;
+- pausas automaticas por estoque e divergencia entre estoque local e remoto;
+- falhas da ultima sincronizacao;
+- anuncios ativos com trafego e nenhuma venda no periodo;
+- anuncios vendidos sem custo confiavel vinculado.
+
+O total `Resolver agora` soma somente ocorrencias acionaveis. A tela nunca inventa
+um custo para anuncios antigos sem vinculo com produto/variacao: esses casos viram
+pendencias explicitas ate que o relacionamento seja corrigido.
+
+## Margem conhecida
+
+A aba `Metricas` apresenta faturamento, comissao, custo dos produtos vendidos e
+margem de contribuicao conhecida por anuncio. O custo usa
+`variant.cost_amount_in_cents * units_per_pack * quantidade vendida`.
+
+Essa margem nao e lucro liquido: frete, impostos e despesas operacionais ainda nao
+sao descontados. Quando qualquer custo necessario estiver ausente, o valor aparece
+como indisponivel e o anuncio entra na Central de operacao.
+
+## Prazo de producao
+
+Ao gerar uma nova previa, a aplicacao consulta os termos de venda aceitos pela
+categoria. Quando `MANUFACTURING_TIME` estiver disponivel, o anuncio recebe cinco
+dias de producao por padrao. O editor permite alterar o prazo entre 1 e 60 dias ou
+desativa-lo para produtos com estoque imediato.
+
+O mesmo controle aparece na edicao de anuncios vinculados. Categorias incompativeis
+mantem o campo desabilitado, evitando enviar um termo que o Mercado Livre removeria.
+O prazo nao deve ser usado em anuncios Flex ou Full e pode reduzir a exposicao do
+anuncio, portanto deve representar somente o tempo real de preparacao/personalizacao.
 
 ## Proxima etapa de producao
 

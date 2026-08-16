@@ -7,7 +7,9 @@ import {
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 
+import { AiEnhanceButton } from "@/components/admin/AiEnhanceButton";
 import { AdminNotice } from "@/components/admin/AdminNotice";
+import { DEFAULT_MANUFACTURING_TIME_DAYS, manufacturingTimeDaysFrom, withManufacturingTime } from "@/domain/mercadoLivre/manufacturingTime.js";
 import type { MercadoLivreDraft, MercadoLivreDraftPayload } from "@/domain/mercadoLivre/publishingRepository";
 
 type Candidate = {
@@ -22,6 +24,7 @@ type ApiResult = { ok?: boolean; message?: string; draft?: MercadoLivreDraft | n
 type PreviewBody = {
   family_name?: string; price?: number; available_quantity?: number; listing_type_id?: string;
   pictures?: Array<{ source?: string }>; attributes?: Array<{ id: string; value_id?: string; value_name?: string }>;
+  sale_terms?: Array<{ id?: string; value_name?: string | null }>;
 };
 
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -86,6 +89,13 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, initialProd
   const title = bodyOf(family[0]).family_name ?? draft?.familyName ?? "";
   const description = family[0]?.description ?? draft?.description ?? "";
   const listingType = bodyOf(family[0]).listing_type_id ?? "gold_special";
+  const manufacturingTimeSupported = family[0]?.manufacturingTimeSupported !== false;
+  const savedManufacturingTimeDays = manufacturingTimeDaysFrom(bodyOf(family[0]).sale_terms);
+  const manufacturingTimeEnabled = family[0]?.manufacturingTimeEnabled
+    ?? Boolean(family[0] && manufacturingTimeSupported);
+  const manufacturingTimeDays = manufacturingTimeEnabled
+    ? savedManufacturingTimeDays ?? DEFAULT_MANUFACTURING_TIME_DAYS
+    : null;
   const blocked = !included.length || included.some((item) => !item.publishable || !item.fees);
 
   function acceptDraft(next: MercadoLivreDraft | null | undefined) {
@@ -192,6 +202,16 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, initialProd
       };
     });
   }
+  function setManufacturingTime(days: number | null) {
+    updateFamily((item) => ({
+      ...item,
+      manufacturingTimeEnabled: days !== null,
+      body: {
+        ...item.body,
+        sale_terms: withManufacturingTime(bodyOf(item).sale_terms, days),
+      },
+    }));
+  }
   function pictureAsset(url: string, variantId: string) {
     return draft?.mediaLibrary.find((item) => item.url === url && item.variantId === variantId)
       ?? draft?.mediaLibrary.find((item) => item.url === url);
@@ -211,6 +231,7 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, initialProd
     if (!draft || selectedKit === null) return;
     request("/admin/api/mercado-livre/rascunho/editar", {
       productId, unitsPerPack: selectedKit, familyName: title, description, listingTypeId: listingType,
+      manufacturingTimeDays,
       offers: family.map((item) => ({
         offerId: item.offerId,
         selected: item.selectedForPublishing !== false,
@@ -280,10 +301,27 @@ export function MercadoLivrePublishPanel({ candidates, initialDraft, initialProd
       <div className="mt-6 flex flex-wrap gap-2" aria-label="Tamanho do kit">{kits.map((size) => { const available = draft.payloads.some((item) => item.unitsPerPack === size && hasKitStock(item)); return <button key={size} type="button" disabled={!available} title={available ? `Preparar kit ${size}` : `Estoque insuficiente para kit ${size}`} onClick={() => { setSelectedKit(size); setDirty(false); setConfirmed(false); }} className={`min-h-10 rounded border px-3 text-sm font-black disabled:cursor-not-allowed disabled:border-white/5 disabled:text-zinc-700 ${selectedKit === size ? "border-laser bg-red-950/30" : "border-white/15 text-zinc-400"}`}>Kit {size}{available ? "" : " · sem estoque"}</button>; })}</div>
 
       <section className="mt-6 border-y border-white/10 py-6">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <label className="grid gap-2 text-sm font-bold">Titulo do anuncio <input value={title} maxLength={60} onChange={(event) => updateFamily((item) => ({ ...item, body: { ...item.body, family_name: event.target.value } }))} className={`${fieldClass} h-11`}/><span className={`text-xs ${title.length >= 45 ? "text-emerald-300" : "text-amber-200"}`}>{title.length}/60 caracteres</span></label>
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className="grid gap-2 text-sm font-bold">
+            <div className="flex flex-wrap items-center justify-between gap-2"><label htmlFor="ml-draft-title">Titulo do anuncio</label><AiEnhanceButton /></div>
+            <input id="ml-draft-title" value={title} maxLength={60} onChange={(event) => updateFamily((item) => ({ ...item, body: { ...item.body, family_name: event.target.value } }))} className={`${fieldClass} h-11`}/>
+            <span className={`text-xs ${title.length >= 45 ? "text-emerald-300" : "text-amber-200"}`}>{title.length}/60 caracteres</span>
+          </div>
           <fieldset><legend className="text-sm font-bold">Modalidade</legend><div className="mt-2 inline-flex rounded border border-white/15 p-1">{[["gold_special","Classico"],["gold_pro","Premium"]].map(([value,label]) => <button key={value} type="button" onClick={() => updateFamily((item) => ({ ...item, body: { ...item.body, listing_type_id: value } }))} className={`min-h-9 rounded px-4 text-sm font-black ${listingType === value ? "bg-white text-black" : "text-zinc-400"}`}>{label}</button>)}</div></fieldset>
-          <label className="grid gap-2 text-sm font-bold lg:col-span-2">Descricao <textarea value={description} rows={8} maxLength={5000} onChange={(event) => updateFamily((item) => ({ ...item, description: event.target.value }))} className={`${fieldClass} resize-y py-3 leading-6`}/><span className="text-xs text-zinc-500">{description.length}/5.000 caracteres</span></label>
+          <fieldset disabled={!manufacturingTimeSupported} className="min-w-[13rem] disabled:opacity-50">
+            <legend className="text-sm font-bold">Prazo de producao</legend>
+            <div className="mt-2 flex h-11 items-center gap-2">
+              <label className="inline-flex items-center gap-2 text-xs font-black"><input type="checkbox" checked={manufacturingTimeDays !== null} onChange={(event) => setManufacturingTime(event.target.checked ? DEFAULT_MANUFACTURING_TIME_DAYS : null)} className="h-4 w-4 accent-red-600"/> Usar</label>
+              <input type="number" min={1} max={60} value={manufacturingTimeDays ?? DEFAULT_MANUFACTURING_TIME_DAYS} disabled={manufacturingTimeDays === null || !manufacturingTimeSupported} onChange={(event) => { const days = Number(event.target.value); if (Number.isInteger(days) && days >= 1 && days <= 60) setManufacturingTime(days); }} aria-label="Dias para producao" className={`${fieldClass} h-10 w-20`}/>
+              <span className="text-xs text-zinc-500">dias</span>
+            </div>
+            <p className="mt-1 max-w-56 text-[11px] font-normal text-zinc-500">{manufacturingTimeSupported ? "Padrao: 5 dias. Desative para estoque imediato." : "Esta categoria nao aceita prazo de producao."}</p>
+          </fieldset>
+          <div className="grid gap-2 text-sm font-bold lg:col-span-3">
+            <div className="flex flex-wrap items-center justify-between gap-2"><label htmlFor="ml-draft-description">Descricao</label><AiEnhanceButton /></div>
+            <textarea id="ml-draft-description" value={description} rows={8} maxLength={5000} onChange={(event) => updateFamily((item) => ({ ...item, description: event.target.value }))} className={`${fieldClass} resize-y py-3 leading-6`}/>
+            <span className="text-xs text-zinc-500">{description.length}/5.000 caracteres</span>
+          </div>
         </div>
       </section>
 

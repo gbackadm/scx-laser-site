@@ -6,8 +6,10 @@ import pg from "pg";
 import { decryptSecret } from "../src/domain/mercadoLivre/core.js";
 import { buildGenericUserProductPayloads, deriveProfilePacks } from "../src/domain/mercadoLivre/genericPublishingCore.js";
 import { extractYoutubeVideoId } from "../src/domain/mercadoLivre/listingQuality.js";
+import { DEFAULT_MANUFACTURING_TIME_DAYS, withManufacturingTime } from "../src/domain/mercadoLivre/manufacturingTime.js";
 
 const { Pool } = pg;
+const STANDARD_PACKS = [10, 50, 100, 500, 1000];
 
 if (existsSync(".env.local")) {
   for (const line of readFileSync(".env.local", "utf8").split(/\r?\n/)) {
@@ -17,19 +19,25 @@ if (existsSync(".env.local")) {
 }
 
 const skuArgumentIndex = process.argv.indexOf("--sku");
-const sku = skuArgumentIndex >= 0 ? process.argv[skuArgumentIndex + 1] : "GA5100";
+const skuEqualsArgument = process.argv.find((argument) => argument.startsWith("--sku="));
+const sku = skuArgumentIndex >= 0 ? process.argv[skuArgumentIndex + 1] : skuEqualsArgument?.slice(6) || "GA5100";
 const includeDetails = process.argv.includes("--details");
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 const numberFrom = (value) => Number(String(value ?? "").replace(",", ".").match(/\d+(?:\.\d+)?/)?.[0] ?? 0);
 
 try {
-  const [account, productResult, variantsResult, imagesResult, pricingResult, tiersResult] = await Promise.all([
+  const [account, productResult, variantsResult, imagesResult, pricingResult, tiersResult, persistedAttributesResult] = await Promise.all([
     pool.query(`SELECT encrypted_access_token FROM scx_mercado_livre_accounts WHERE status='active' ORDER BY updated_at DESC LIMIT 1`),
-    pool.query(`SELECT product.*, supplier.external_id, supplier.raw_payload, profile.*,
-      product.id AS product_id, product.scx_sku AS product_scx_sku
+    pool.query(`SELECT product.*, supplier.external_id, supplier.raw_payload,
+      product.id AS product_id, product.scx_sku AS product_scx_sku,
+      COALESCE(settings.category_id, CASE WHEN profile.status='reviewed' THEN profile.category_id END) AS ml_category_id,
+      COALESCE(settings.domain_id, CASE WHEN profile.status='reviewed' THEN profile.domain_id END) AS ml_domain_id,
+      CASE WHEN settings.product_id IS NOT NULL OR profile.status='reviewed' THEN 'reviewed' ELSE 'unreviewed' END AS ml_profile_status,
+      profile.variation_axes, profile.attribute_mapping
       FROM scx_catalog_products product
       JOIN scx_catalog_supplier_products supplier ON supplier.id=product.supplier_product_id
-      JOIN scx_mercado_livre_category_profiles profile ON profile.catalog_category_id=product.category_id
+      LEFT JOIN scx_mercado_livre_category_profiles profile ON profile.catalog_category_id=product.category_id
+      LEFT JOIN scx_mercado_livre_product_settings settings ON settings.product_id=product.id
       WHERE product.sku=$1 OR product.scx_sku=$1 LIMIT 1`, [sku]),
     pool.query(`SELECT variant.id, variant.scx_sku, variant.cost_amount_in_cents, variant.stock_quantity, variant.attributes,
       COALESCE(array_agg(image.url ORDER BY image.sort_order, image.id) FILTER (WHERE image.id IS NOT NULL), '{}') images
@@ -41,9 +49,15 @@ try {
       WHERE product.sku=$1 OR product.scx_sku=$1 ORDER BY image.sort_order, image.id`, [sku]),
     pool.query(`SELECT * FROM scx_catalog_pricing_rules WHERE scope='global' AND is_active=true ORDER BY updated_at DESC LIMIT 1`),
     pool.query(`SELECT * FROM scx_catalog_pricing_batch_tiers WHERE pricing_rule_id='global-default' AND is_active=true ORDER BY min_quantity`),
+    pool.query(`SELECT attribute.attribute_id AS id, attribute.value_id, attribute.value_name
+      FROM scx_mercado_livre_product_attributes attribute
+      JOIN scx_catalog_products product ON product.id=attribute.product_id
+      WHERE (product.sku=$1 OR product.scx_sku=$1)
+        AND NULLIF(btrim(attribute.value_name),'') IS NOT NULL`, [sku]),
   ]);
   const product = productResult.rows[0];
   if (!account.rows[0] || !product) throw new Error("Conta ou produto ausente.");
+  if (!product.ml_category_id || !product.ml_domain_id) throw new Error("Produto sem categoria Mercado Livre revisada.");
   const properties = product.raw_payload?.propriedades ?? {};
   const boxDimensions = String(properties["dimensao-caixa"] ?? "").replace(/,/g, ".").match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
   const unitDimensions = String(properties["dimensao-produto"] ?? "").replace(/,/g, ".").match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
@@ -61,7 +75,7 @@ try {
     lengthCm: unitDimensions.length >= 3 ? unitDimensions[2] : unitDimensions[1] ?? numberFrom(product.raw_payload?.comprimento),
     weightGrams: Math.round(numberFrom(properties["peso-do-produto"] ?? product.raw_payload?.peso) * 1000),
   };
-  const packResult = deriveProfilePacks({ desiredQuantities: [...new Set([...(product.pack_quantities ?? []).map(Number), masterUnits])], masterPack, unit });
+  const packResult = deriveProfilePacks({ desiredQuantities: [...new Set([...STANDARD_PACKS, masterUnits])], masterPack, unit });
   const rule = pricingResult.rows[0];
   const offerPrice = (cost, quantity) => {
     const tier = [...tiersResult.rows].filter((item) => item.min_quantity <= quantity).at(-1);
@@ -75,23 +89,59 @@ try {
     offerPricesInCents: Object.fromEntries(packResult.packs.map((pack) => [String(pack.unitsPerPack), offerPrice(Number(row.cost_amount_in_cents), pack.unitsPerPack)])),
   }));
   const token = decryptSecret(account.rows[0].encrypted_access_token, process.env.MERCADO_LIVRE_TOKEN_ENCRYPTION_KEY);
-  const [attributesResponse, categoryResponse] = await Promise.all([
-    fetch(`https://api.mercadolibre.com/categories/${product.category_id}/attributes`, { headers: { Authorization: `Bearer ${token}` } }),
-    fetch(`https://api.mercadolibre.com/categories/${product.category_id}`, { headers: { Authorization: `Bearer ${token}` } }),
+  const [attributesResponse, categoryResponse, saleTermsResponse] = await Promise.all([
+    fetch(`https://api.mercadolibre.com/categories/${product.ml_category_id}/attributes`, { headers: { Authorization: `Bearer ${token}` } }),
+    fetch(`https://api.mercadolibre.com/categories/${product.ml_category_id}`, { headers: { Authorization: `Bearer ${token}` } }),
+    fetch(`https://api.mercadolibre.com/categories/${product.ml_category_id}/sale_terms`, { headers: { Authorization: `Bearer ${token}` } }),
   ]);
   if (!attributesResponse.ok || !categoryResponse.ok) throw new Error("Nao foi possivel consultar as regras da categoria.");
   const [categoryAttributes, category] = await Promise.all([attributesResponse.json(), categoryResponse.json()]);
+  const saleTerms = saleTermsResponse.ok ? await saleTermsResponse.json() : [];
+  const categoryIds = new Set(categoryAttributes.map((attribute) => attribute.id));
+  const colorTarget = categoryAttributes.find((attribute) => attribute.tags?.defines_picture)
+    ?? categoryAttributes.find((attribute) => ["COLOR", "EXTERIOR_COLOR"].includes(attribute.id));
+  const attributeMappings = Array.isArray(product.attribute_mapping) ? [...product.attribute_mapping] : [];
+  const persistedAttributes = persistedAttributesResult.rows.map((row) => ({ id: String(row.id), ...(row.value_id ? { value_id: String(row.value_id) } : {}), ...(row.value_name ? { value_name: String(row.value_name) } : {}) }));
+  const automaticMappings = [
+    ...(categoryIds.has("MODEL") ? [{ targetId: "MODEL", source: "supplierCode" }] : []),
+    ...(categoryIds.has("MATERIALS") ? [{ targetId: "MATERIALS", source: "inferredMaterial" }] : []),
+    ...(colorTarget ? [{ targetId: colorTarget.id, source: "variantAttribute", sourceKey: "Cor" }] : []),
+  ];
+  for (const mapping of automaticMappings) {
+    if (!attributeMappings.some((item) => item.targetId === mapping.targetId)) attributeMappings.push(mapping);
+  }
+  for (const value of persistedAttributes) {
+    if (categoryIds.has(value.id) && !attributeMappings.some((item) => item.targetId === value.id)) {
+      attributeMappings.push({ targetId: value.id, source: "literal", valueId: value.value_id, valueName: value.value_name });
+    }
+  }
+  const requestedAxes = Array.isArray(product.variation_axes) && product.variation_axes.length
+    ? product.variation_axes
+    : colorTarget && variants.some((variant) => variant.attributes?.Cor) ? ["Cor"] : [];
+  const variationAxes = requestedAxes.filter((axis) => attributeMappings.some((mapping) =>
+    mapping.source === "variantAttribute" && mapping.sourceKey === axis
+    && categoryAttributes.some((attribute) => attribute.id === mapping.targetId
+      && (attribute.tags?.allow_variations || attribute.tags?.variation_attribute || attribute.tags?.defines_picture))
+  ));
   const built = buildGenericUserProductPayloads({
     product: { id: String(product.product_id), title: String(product.title), description: String(product.description ?? ""), supplierCode: String(product.external_id), sku: String(product.product_scx_sku), stockQuantity: Number(product.stock_quantity), images: imagesResult.rows.map((row) => String(row.url)), videoId: extractYoutubeVideoId(product.raw_payload?.video), offerPricesInCents: {}, variants },
-    profile: { status: product.status, categoryId: product.category_id, domainId: product.domain_id, familyName: String(product.title), maxPictures: Number(category.settings?.max_pictures_per_item ?? 12), variationAxes: product.variation_axes ?? [], packQuantities: packResult.packs.map((pack) => pack.unitsPerPack), attributeMappings: product.attribute_mapping ?? [] },
+    profile: { status: product.ml_profile_status, categoryId: product.ml_category_id, domainId: product.ml_domain_id, familyName: String(product.title), maxPictures: Number(category.settings?.max_pictures_per_item ?? 12), variationAxes, packQuantities: packResult.packs.map((pack) => pack.unitsPerPack), attributeMappings },
     categoryAttributes,
     packages: packResult.packs,
   });
+  const manufacturingTimeSupported = Array.isArray(saleTerms) && saleTerms.some((term) => term.id === "MANUFACTURING_TIME");
   const results = [];
-  for (const payload of built.payloads) {
-    const response = await fetch("https://api.mercadolibre.com/items/validate", { method: "POST", headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(payload.body) });
-    const body = await response.json().catch(() => null);
-    const causes = Array.isArray(body?.cause) ? body.cause : [];
+  for (const payload of built.payloads.filter((item) => Number(item.body.available_quantity ?? 0) > 0)) {
+    const existingAttributes = Array.isArray(payload.body.attributes) ? payload.body.attributes : [];
+    const persistedIds = new Set(persistedAttributes.map((attribute) => attribute.id));
+    const body = {
+      ...payload.body,
+      attributes: [...existingAttributes.filter((attribute) => !persistedIds.has(attribute.id)), ...persistedAttributes],
+      ...(manufacturingTimeSupported ? { sale_terms: withManufacturingTime([], DEFAULT_MANUFACTURING_TIME_DAYS) } : {}),
+    };
+    const response = await fetch("https://api.mercadolibre.com/items/validate", { method: "POST", headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const responseBody = await response.json().catch(() => null);
+    const causes = Array.isArray(responseBody?.cause) ? responseBody.cause : [];
     results.push({ sku: payload.sku, unitsPerPack: payload.unitsPerPack, packageConfidence: payload.package.confidence, accepted: causes.every((cause) => cause.type !== "error"), errors: causes.filter((cause) => cause.type === "error").map((cause) => ({ code: cause.code, message: cause.message })), warnings: causes.filter((cause) => cause.type === "warning").map((cause) => cause.code) });
   }
   const groups = [...new Set(results.map((item) => item.unitsPerPack))].map((unitsPerPack) => {
@@ -110,7 +160,7 @@ try {
     .map(({ code, message }) => ({ code, message }));
   const output = {
     sku,
-    profile: { categoryId: product.category_id, domainId: product.domain_id },
+    profile: { categoryId: product.ml_category_id, domainId: product.ml_domain_id, manufacturingTimeSupported },
     readinessErrors,
     total: results.length,
     accepted: results.filter((item) => item.accepted).length,

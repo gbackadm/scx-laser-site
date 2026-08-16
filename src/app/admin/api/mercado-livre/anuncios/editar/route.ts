@@ -45,6 +45,7 @@ export async function PUT(request: Request) {
       title: String(body.title ?? ""),
       price: Number(body.price),
       description: String(body.description ?? ""),
+      manufacturingTimeDays: body.manufacturingTimeDays === null ? null : Number(body.manufacturingTimeDays),
       pictureSources: body.pictureSources.map(String),
     });
     await writeAdminAuditLog({

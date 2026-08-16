@@ -21,6 +21,7 @@ export async function POST(request: Request) {
       familyName: String(body.familyName ?? ""),
       description: String(body.description ?? ""),
       listingTypeId: body.listingTypeId === "gold_pro" ? "gold_pro" : "gold_special",
+      manufacturingTimeDays: body.manufacturingTimeDays === null ? null : Number(body.manufacturingTimeDays),
       offers: body.offers.map((item: Record<string, unknown>) => ({
         offerId: String(item.offerId ?? ""),
         selected: item.selected === true,
